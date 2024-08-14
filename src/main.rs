@@ -17,10 +17,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Rename {
-        #[arg(short, long)]
         path: Option<PathBuf>,
         #[arg(short, long)]
-        dry: bool,
+        exec: bool,
     },
 }
 
@@ -32,25 +31,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     // rename::rename("test_src/IMG_2213.DNG").expect("This to work");
 
     match cli.command {
-        Some(Commands::Rename { dry, path }) => {
+        Some(Commands::Rename { exec, path }) => {
             let path_buf = path.unwrap_or_else(|| {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
             });
             let path = path_buf.as_path();
             println!("RENAME:: {:?}", path);
-            let next_paths = rename::get_new_paths(path)?;
 
-            if dry {
-                println!("dry run");
-                for (old_p, new_p) in next_paths {
-                    println!("{} -> {}", old_p.as_str(), new_p.as_str());
-                }
-                todo!()
-            } else {
+            if exec {
                 println!("real run");
                 // std::fs::rename(path, new_path)?;
                 todo!();
+            } else {
+                println!("dry run");
+                let next_paths = rename::get_new_paths(path, rename::RunType::Dry)?;
             }
             // println!("we are here");
             // rename::rename("test_src/IMG_2213.DNG").expect("This to work");

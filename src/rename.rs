@@ -89,41 +89,69 @@ fn get_new_path<P: AsRef<Path>>(path: P) -> Result<(OldPath, NewPath), Box<dyn E
     }
 }
 
-pub fn get_new_paths<P: AsRef<Path>>(path: P) -> Result<Vec<(OldPath, NewPath)>, Box<dyn Error>> {
+#[derive(PartialEq)]
+pub enum RunType {
+    Dry,
+    Exec,
+}
+
+pub fn get_new_paths<P: AsRef<Path>>(
+    path: P,
+    mode: RunType,
+) -> Result<(Vec<(OldPath, NewPath)>, Vec<String>), Box<dyn Error>> {
     let path = path.as_ref();
     let mut items = vec![];
+    let mut skip = vec![];
     if path.is_dir() {
         for entry in WalkDir::new(path) {
             if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() && (utils::is_img_ext(path) || utils::is_video_ext(path)) {
-                    // println!("entry: {:?}", entry);
-                    match get_new_path(path) {
-                        Ok(val) => items.push(val),
+                let file_path = entry.path();
+                let is_processable =
+                    utils::is_img_ext(&file_path) || utils::is_video_ext(&file_path);
+                if file_path.is_file() && is_processable {
+                    match get_new_path(&file_path) {
+                        Ok(val) => {
+                            if mode == RunType::Dry {
+                                println!("{} -> {}", val.0.as_str(), val.1.as_str());
+                            }
+                            items.push(val);
+                        }
                         Err(_) => {
-                            println!(
-                                "Skipping: missing exif date: {}",
-                                path.to_str().unwrap_or("")
-                            )
+                            let path_str = file_path.to_str().unwrap_or("XXX");
+                            if mode == RunType::Dry {
+                                println!("Missing date: {}", path_str);
+                            }
+                            skip.push(path_str.to_string());
                         }
                     }
+                } else {
+                    let path_str = file_path.to_str().unwrap_or("XXX");
+                    if mode == RunType::Dry {
+                        println!("Skipping: {}", path_str);
+                    }
+                    skip.push(path_str.to_string());
                 }
             }
         }
     } else if path.is_file() {
-        // println!("we are in the file {:?}", path);
         match get_new_path(path) {
-            Ok(val) => items.push(val),
+            Ok(val) => {
+                if mode == RunType::Dry {
+                    println!("{} -> {}", val.0.as_str(), val.1.as_str());
+                }
+                items.push(val);
+            }
             Err(_) => {
-                println!(
-                    "Skipping: missing exif date: {}",
-                    path.to_str().unwrap_or("")
-                )
+                let path_str = path.to_str().unwrap_or("XXX");
+                if mode == RunType::Dry {
+                    println!("Missing date: {}", path_str);
+                }
+                skip.push(path_str.to_string());
             }
         }
     } else {
         eprintln!("We don't support antying but a directory or a file.");
     }
 
-    Ok(items)
+    Ok((items, skip))
 }
