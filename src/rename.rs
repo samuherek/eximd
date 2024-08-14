@@ -95,13 +95,15 @@ pub enum RunType {
     Exec,
 }
 
-pub fn get_new_paths<P: AsRef<Path>>(
-    path: P,
-    mode: RunType,
-) -> Result<(Vec<(OldPath, NewPath)>, Vec<String>), Box<dyn Error>> {
+fn rename_file(old_path: OldPath, new_path: NewPath) -> Result<(), Box<dyn Error>> {
+    let old_path = std::path::Path::new(old_path.as_str());
+    let new_path = std::path::Path::new(new_path.as_str());
+    let _ = std::fs::rename(old_path, new_path)?;
+    Ok(())
+}
+
+pub fn get_new_paths<P: AsRef<Path>>(path: P, mode: RunType) -> Result<(), Box<dyn Error>> {
     let path = path.as_ref();
-    let mut items = vec![];
-    let mut skip = vec![];
     if path.is_dir() {
         for entry in WalkDir::new(path) {
             if let Ok(entry) = entry {
@@ -110,48 +112,45 @@ pub fn get_new_paths<P: AsRef<Path>>(
                     utils::is_img_ext(&file_path) || utils::is_video_ext(&file_path);
                 if file_path.is_file() && is_processable {
                     match get_new_path(&file_path) {
-                        Ok(val) => {
-                            if mode == RunType::Dry {
+                        Ok(val) => match mode {
+                            RunType::Dry => {
                                 println!("{} -> {}", val.0.as_str(), val.1.as_str());
                             }
-                            items.push(val);
-                        }
+                            RunType::Exec => {
+                                println!("{} -> {}", val.0.as_str(), val.1.as_str());
+                                rename_file(val.0, val.1)?;
+                            }
+                        },
                         Err(_) => {
                             let path_str = file_path.to_str().unwrap_or("XXX");
-                            if mode == RunType::Dry {
-                                println!("Missing date: {}", path_str);
-                            }
-                            skip.push(path_str.to_string());
+                            println!("Missing date: {}", path_str);
                         }
                     }
                 } else {
                     let path_str = file_path.to_str().unwrap_or("XXX");
-                    if mode == RunType::Dry {
-                        println!("Skipping: {}", path_str);
-                    }
-                    skip.push(path_str.to_string());
+                    println!("Skipping: {}", path_str);
                 }
             }
         }
     } else if path.is_file() {
         match get_new_path(path) {
-            Ok(val) => {
-                if mode == RunType::Dry {
+            Ok(val) => match mode {
+                RunType::Dry => {
                     println!("{} -> {}", val.0.as_str(), val.1.as_str());
                 }
-                items.push(val);
-            }
+                RunType::Exec => {
+                    println!("{} -> {}", val.0.as_str(), val.1.as_str());
+                    rename_file(val.0, val.1)?;
+                }
+            },
             Err(_) => {
                 let path_str = path.to_str().unwrap_or("XXX");
-                if mode == RunType::Dry {
-                    println!("Missing date: {}", path_str);
-                }
-                skip.push(path_str.to_string());
+                println!("Missing date: {}", path_str);
             }
         }
     } else {
         eprintln!("We don't support antying but a directory or a file.");
     }
 
-    Ok((items, skip))
+    Ok(())
 }

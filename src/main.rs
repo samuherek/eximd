@@ -32,6 +32,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match cli.command {
         Some(Commands::Rename { exec, path }) => {
+            let mode = if exec {
+                rename::RunType::Exec
+            } else {
+                rename::RunType::Dry
+            };
             let path_buf = path.unwrap_or_else(|| {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
@@ -39,16 +44,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             let path = path_buf.as_path();
             println!("RENAME:: {:?}", path);
 
-            if exec {
-                println!("real run");
-                // std::fs::rename(path, new_path)?;
-                todo!();
-            } else {
-                println!("dry run");
-                let next_paths = rename::get_new_paths(path, rename::RunType::Dry)?;
+            if mode == rename::RunType::Dry {
+                println!("MODE:: dry run");
             }
-            // println!("we are here");
-            // rename::rename("test_src/IMG_2213.DNG").expect("This to work");
+            rename::get_new_paths(path, mode)?;
         }
         _ => {
             println!("Incorrect usage");
