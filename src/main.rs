@@ -41,13 +41,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
             });
-            let path = path_buf.as_path();
-            println!("RENAME:: {:?}", path);
-
-            if mode == rename::RunType::Dry {
-                println!("MODE:: dry run");
-            }
-            rename::get_new_paths(path, mode)?;
+            rename::complex_paths(path_buf, mode)?;
+            // let path = path_buf.as_path();
+            // println!("RENAME:: {:?}", path);
+            //
+            // if mode == rename::RunType::Dry {
+            //     println!("MODE:: dry run");
+            // }
+            // rename::get_new_paths(path, mode)?;
         }
         _ => {
             println!("Incorrect usage");

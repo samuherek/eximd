@@ -1,15 +1,16 @@
 use super::exif;
 use super::utils;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use walkdir::WalkDir;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct DateTime {
-    source_file: String,
     file_name: String,
     #[serde(default, deserialize_with = "parse_date")]
     date_time_original: Option<chrono::NaiveDateTime>,
@@ -89,6 +90,36 @@ fn get_new_path<P: AsRef<Path>>(path: P) -> Result<(OldPath, NewPath), Box<dyn E
     }
 }
 
+fn exif_date_time<P: AsRef<Path>>(path: P) -> Option<DateTime> {
+    let cmd = Command::new("exiftool")
+        .args(["-j", path.as_ref().to_str().unwrap()])
+        .output()
+        .expect("Exiftool command did not work");
+
+    let data = String::from_utf8(cmd.stdout).expect("To convert the utf8 into a string");
+    let value = match exif::get_one_exif_input(&data) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            return None;
+        }
+    };
+    match serde_json::from_str::<DateTime>(&value) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            None
+        }
+    }
+}
+
+fn next_file_stem(date: &DateTime) -> Option<String> {
+    if let Some(date) = date.date_time_original {
+        return Some(date.format("%Y-%m-%d_%H.%M.%S").to_string());
+    }
+    None
+}
+
 #[derive(PartialEq)]
 pub enum RunType {
     Dry,
@@ -99,6 +130,112 @@ fn rename_file(old_path: OldPath, new_path: NewPath) -> Result<(), Box<dyn Error
     let old_path = std::path::Path::new(old_path.as_str());
     let new_path = std::path::Path::new(new_path.as_str());
     let _ = std::fs::rename(old_path, new_path)?;
+    Ok(())
+}
+
+#[derive(Debug)]
+pub struct InputSrc {
+    source: PathBuf,
+}
+
+impl InputSrc {
+    fn new(source: PathBuf) -> Self {
+        Self { source }
+    }
+
+    fn source_string(&self) -> String {
+        self.source.to_string_lossy().into()
+    }
+
+    fn key(&self) -> String {
+        match self.source.file_stem() {
+            Some(stem) => stem.to_string_lossy().into(),
+            None => "".into(),
+        }
+    }
+}
+
+fn is_supported(path: &Path) -> bool {
+    path.is_file() && (utils::is_img_ext(path) || utils::is_video_ext(path))
+}
+
+fn walk_path(path: &PathBuf) -> Result<Vec<InputSrc>, Box<dyn Error>> {
+    let p = path.as_path();
+    let mut paths = vec![];
+    if p.is_file() {
+        paths.push(InputSrc::new(p.to_path_buf()));
+    } else if p.is_dir() {
+        for entry in WalkDir::new(p) {
+            if let Ok(entry) = entry {
+                paths.push(InputSrc::new(entry.path().to_path_buf()));
+            }
+        }
+    }
+
+    Ok(paths)
+}
+
+struct PrepInput {
+    input: String,
+    output: String,
+}
+
+// impl PrepInput {
+//     fn new() -> Self {}
+// }
+
+fn hash_map_input(input: Vec<InputSrc>) -> HashMap<String, Vec<InputSrc>> {
+    let mut map = HashMap::new();
+
+    for item in input {
+        map.entry(item.key()).or_insert(Vec::new()).push(item);
+    }
+
+    map
+}
+
+pub fn complex_paths(path: PathBuf, mode: RunType) -> Result<(), Box<dyn Error>> {
+    let input = walk_path(&path)?;
+    let map = hash_map_input(input);
+
+    for (key, items) in map {
+        let supported_input = items
+            .iter()
+            .filter(|val| is_supported(&val.source))
+            .collect::<Vec<_>>();
+        if supported_input.len() > 1 {
+            eprintln!(
+                "We got more supported files with the same name for: {}",
+                key
+            );
+            println!("Skipping...");
+            continue;
+        }
+
+        if let Some(item) = supported_input.get(0) {
+            let next_stem = exif_date_time(&item.source)
+                .as_ref()
+                .map(next_file_stem)
+                .flatten();
+            if let Some(stem) = next_stem {
+                for input in items.iter() {
+                    let mut name = stem.clone();
+                    if let Some(ext) = input.source.extension() {
+                        name.push_str(".");
+                        let ext = ext.to_string_lossy().to_string();
+                        name.push_str(ext.as_str());
+                    }
+                    let next_path = input.source.with_file_name(name);
+                    println!(
+                        "{} -> {}",
+                        item.source_string(),
+                        next_path.display().to_string()
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
