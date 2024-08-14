@@ -1,0 +1,12 @@
+[package]
+name = "imgdup"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { version = "0.4.38", features = ["serde"] }
+clap = { version = "4.5.15", features = ["derive"] }
+serde = { version = "1.0.205", features = ["derive"] }
+serde_json = "1.0.122"
+sha2 = "0.10.8"
+walkdir = "2.5.0"

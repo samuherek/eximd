@@ -1,0 +1,9 @@
+/target
+duplicates.txt
+test_output/
+test_src/
+input1.png
+input1a.png
+input2.png
+keys.txt
+output.json
