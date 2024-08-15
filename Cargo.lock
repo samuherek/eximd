@@ -199,6 +199,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "exival"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "kamadak-exif",
+ "serde",
+ "serde_json",
+ "sha2",
+ "walkdir",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -235,19 +248,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
-]
-
-[[package]]
-name = "imgdup"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "kamadak-exif",
- "serde",
- "serde_json",
- "sha2",
- "walkdir",
 ]
 
 [[package]]

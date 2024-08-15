@@ -1,5 +1,7 @@
 use super::exif;
 use super::utils;
+use exival::config::RunType;
+use exival::file_system::FileSystem;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
@@ -55,24 +57,14 @@ fn exif_date_time<P: AsRef<Path>>(path: P) -> Option<DateTime> {
 }
 
 fn next_file_stem(date: &DateTime) -> Option<String> {
-    if let Some(date) = date.date_time_original {
-        return Some(date.format("%Y-%m-%d_%H.%M.%S").to_string());
-    }
-    None
+    date.date_time_original
+        .map(|date| date.format("%Y-%m-%d_%H.%M.%S").to_string())
 }
 
-#[derive(PartialEq)]
-pub enum RunType {
-    Dry,
-    Exec,
-}
-
-fn rename_file(old_path: &PathBuf, new_path: &PathBuf) -> Result<(), Box<dyn Error>> {
-    // let old_path = std::path::Path::new(old_path.as_str());
-    // let new_path = std::path::Path::new(new_path.as_str());
-    let _ = std::fs::rename(old_path, new_path)?;
-    Ok(())
-}
+// fn rename_file(old_path: &PathBuf, new_path: &PathBuf) -> Result<(), Box<dyn Error>> {
+//     let _ = std::fs::rename(old_path, new_path)?;
+//     Ok(())
+// }
 
 #[derive(Debug)]
 pub struct InputSrc(PathBuf);
@@ -101,13 +93,17 @@ impl InputSrc {
             None => "".into(),
         }
     }
+
+    fn print_skip(&self) {
+        println!("{} -> Skip", self.source_string());
+    }
 }
 
 fn is_supported(path: &Path) -> bool {
     path.is_file() && (utils::is_img_ext(path) || utils::is_video_ext(path))
 }
 
-fn walk_path(path: &PathBuf) -> Result<Vec<InputSrc>, Box<dyn Error>> {
+pub fn walk_path(path: &PathBuf) -> Result<Vec<InputSrc>, Box<dyn Error>> {
     let p = path.as_path();
     let mut paths = vec![];
     if p.is_file() {
@@ -138,7 +134,7 @@ impl PrepInput {
             .source()
             .extension()
             .map(|i| i.to_string_lossy().into())
-            .unwrap_or("".into());
+            .unwrap_or_default();
 
         Self {
             source: input.source().to_path_buf(),
@@ -166,9 +162,17 @@ impl PrepInput {
     fn next_path_string(&self) -> String {
         self.next_path().to_string_lossy().into()
     }
+
+    fn print_rename(&self) {
+        println!("{} -> {}", self.source_string(), self.next_path_string());
+    }
+
+    fn print_error(&self, err: std::io::Error) {
+        eprintln!("{} -> {}", self.source_string(), err);
+    }
 }
 
-fn hash_map_input(input: Vec<InputSrc>) -> HashMap<String, Vec<InputSrc>> {
+fn hash_map_input(input: &[InputSrc]) -> HashMap<String, Vec<&InputSrc>> {
     let mut map = HashMap::new();
 
     for item in input {
@@ -178,18 +182,35 @@ fn hash_map_input(input: Vec<InputSrc>) -> HashMap<String, Vec<InputSrc>> {
     map
 }
 
-pub fn complex_paths(path: PathBuf, mode: RunType) -> Result<(), Box<dyn Error>> {
-    let input = walk_path(&path)?;
-    let map = hash_map_input(input);
-
-    if mode == RunType::Dry {
-        println!("Dry run::");
+fn rename_file_group<F: FileSystem>(
+    fs: &F,
+    group: &[PrepInput],
+    config: RunType,
+) -> Result<(), Box<dyn Error>> {
+    // TODO: Rollback if there is an error in the renaming.
+    // let mut done = vec![];
+    for input in group {
+        match config {
+            RunType::Exec => match fs.rename(&input.source(), &input.next_path()) {
+                Ok(_) => input.print_rename(),
+                Err(err) => input.print_error(err),
+            },
+            RunType::Dry => input.print_rename(),
+        }
     }
 
-    for (key, items) in map {
+    Ok(())
+}
+
+pub fn process_input<F: FileSystem>(
+    fs: &F,
+    input: &[InputSrc],
+    config: RunType,
+) -> Result<(), Box<dyn Error>> {
+    for (key, items) in hash_map_input(input) {
         let supported_input = items
             .iter()
-            .filter(|val| is_supported(&val.source()))
+            .filter(|val| is_supported(val.source()))
             .collect::<Vec<_>>();
         if supported_input.len() > 1 {
             eprintln!(
@@ -206,15 +227,12 @@ pub fn complex_paths(path: PathBuf, mode: RunType) -> Result<(), Box<dyn Error>>
                 .map(next_file_stem)
                 .flatten();
             if let Some(stem) = next_stem {
-                let queue = items
-                    .iter()
-                    .map(|i| PrepInput::new(i, &stem))
-                    .collect::<Vec<PrepInput>>();
-                rename_file_group(&queue, &mode)?;
+                let queue: Vec<_> = items.iter().map(|i| PrepInput::new(i, &stem)).collect();
+                rename_file_group(fs, &queue, config)?;
             }
         } else {
-            for item in items.iter() {
-                println!("{} -> Skip", item.source_string());
+            for item in items.into_iter() {
+                item.print_skip();
             }
         }
     }
@@ -222,24 +240,31 @@ pub fn complex_paths(path: PathBuf, mode: RunType) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-fn rename_file_group(group: &[PrepInput], mode: &RunType) -> Result<(), Box<dyn Error>> {
-    // TODO: Rollback if there is an error in the renaming.
-    // let mut done = vec![];
-    for input in group {
-        match mode {
-            RunType::Exec => match rename_file(&input.source(), &input.next_path()) {
-                Ok(_) => {
-                    println!("{} -> {}", input.source_string(), input.next_path_string());
-                }
-                Err(err) => {
-                    eprintln!("{} -> {}", input.source_string(), err);
-                }
-            },
-            RunType::Dry => {
-                println!("{} -> {}", input.source_string(), input.next_path_string());
-            }
-        }
+pub fn print_mode(mode: &RunType) {
+    match mode {
+        RunType::Dry => println!("Dry run results::"),
+        _ => {}
     }
+}
 
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use exival::file_system::MockFileSystem;
+
+    #[test]
+    fn test_rename_group_with_mock() {
+        let fs = MockFileSystem::new();
+        let input_src = InputSrc::new(&PathBuf::from("file.txt")).unwrap();
+        let prep_input = PrepInput::new(&input_src, "new_file");
+
+        let _ = rename_file_group(&fs, &[prep_input], RunType::Exec);
+        let result = fs.renamed_files.borrow();
+        let expected = vec![(PathBuf::from("file.txt"), PathBuf::from("new_file.txt"))];
+        println!("result is:");
+        println!("{:?}", result);
+        println!("{:?}", expected);
+
+        assert_eq!(*fs.renamed_files.borrow(), expected);
+    }
 }

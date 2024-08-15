@@ -1,9 +1,9 @@
 mod exif;
-mod ext;
 mod hash_file;
 mod rename;
 mod utils;
 use clap::{Parser, Subcommand};
+use exival::file_system::RealFileSystem;
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -38,22 +38,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(Commands::Rename { exec, path }) => {
             let mode = if exec {
-                rename::RunType::Exec
+                exival::config::RunType::Exec
             } else {
-                rename::RunType::Dry
+                exival::config::RunType::Dry
             };
+            let fs = RealFileSystem::new(&mode);
             let path_buf = path.unwrap_or_else(|| {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
             });
-            rename::complex_paths(path_buf, mode)?;
-            // let path = path_buf.as_path();
-            // println!("RENAME:: {:?}", path);
-            //
-            // if mode == rename::RunType::Dry {
-            //     println!("MODE:: dry run");
-            // }
-            // rename::get_new_paths(path, mode)?;
+            let input_paths = rename::walk_path(&path_buf)?;
+            rename::print_mode(&mode);
+            rename::process_input(&fs, &input_paths, mode)?;
         }
         _ => {
             println!("Incorrect usage");
