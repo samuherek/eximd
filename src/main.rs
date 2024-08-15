@@ -16,6 +16,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Test,
     Rename {
         path: Option<PathBuf>,
         #[arg(short, long)]
@@ -31,6 +32,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // rename::rename("test_src/IMG_2213.DNG").expect("This to work");
 
     match cli.command {
+        Some(Commands::Test) => {
+            println!("Test success.");
+            // exif::read_with_rs()?;
+        }
         Some(Commands::Rename { exec, path }) => {
             let mode = if exec {
                 rename::RunType::Exec

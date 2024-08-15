@@ -1,3 +1,4 @@
+// extern crate exif;
 use serde::Deserialize;
 use std::error::Error;
 use std::io::{BufRead, Write};
@@ -348,3 +349,20 @@ pub fn get_key_map() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+// pub fn read_with_rs() -> Result<(), Box<dyn Error>> {
+//     let file = std::fs::File::open("/Volumes/photo/2023/2023-11-11 run/IMG_0253.DNG")?;
+//     let mut bufreader = std::io::BufReader::new(&file);
+//     let exifreader = exif::Reader::new();
+//     let exif = exifreader.read_from_container(&mut bufreader)?;
+//     for f in exif.fields() {
+//         println!(
+//             "{} {} {}",
+//             f.tag,
+//             f.ifd_num,
+//             f.display_value().with_unit(&exif)
+//         );
+//     }
+//
+//     Ok(())
+// }

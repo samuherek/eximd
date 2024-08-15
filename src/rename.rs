@@ -31,65 +31,6 @@ where
     }
 }
 
-pub struct OldPath(String);
-
-impl OldPath {
-    pub fn new(value: &str) -> Self {
-        OldPath(value.to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-pub struct NewPath(String);
-
-impl NewPath {
-    pub fn new(value: &str) -> Self {
-        NewPath(value.to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-fn get_new_path<P: AsRef<Path>>(path: P) -> Result<(OldPath, NewPath), Box<dyn Error>> {
-    let path = path.as_ref();
-    let path_str = path.to_str().expect("To convert the path to string");
-    let old_path = OldPath::new(path_str);
-    let cmd = Command::new("exiftool")
-        .args(["-j", path.to_str().unwrap()])
-        .output()
-        .expect("Exiftool command did not work");
-
-    let data = String::from_utf8(cmd.stdout).expect("To convert the utf8 into a string");
-    let value = exif::get_one_exif_input(&data)?;
-    let value = serde_json::from_str::<DateTime>(&value).map_err(|err| {
-        println!("Error in path: {}", path_str);
-        err
-    })?;
-    let ext = value.file_name.split(".").last().unwrap_or("");
-    if let Some(date) = value.date_time_original {
-        let date_name = date.format("%Y-%m-%d_%H.%M.%S");
-        let name = format!("{}.{}", date_name, ext);
-        let new_path = path.with_file_name(name);
-        let new_path = new_path
-            .as_path()
-            .to_str()
-            .expect("To convert new path to string");
-        let new_path = NewPath::new(new_path);
-        Ok((old_path, new_path))
-    } else {
-        Err(format!(
-            "Could not get the exif data from {:?}",
-            path.to_str()
-        ))
-        .map_err(|e| e.into())
-    }
-}
-
 fn exif_date_time<P: AsRef<Path>>(path: P) -> Option<DateTime> {
     let cmd = Command::new("exiftool")
         .args(["-j", path.as_ref().to_str().unwrap()])
@@ -126,29 +67,36 @@ pub enum RunType {
     Exec,
 }
 
-fn rename_file(old_path: OldPath, new_path: NewPath) -> Result<(), Box<dyn Error>> {
-    let old_path = std::path::Path::new(old_path.as_str());
-    let new_path = std::path::Path::new(new_path.as_str());
+fn rename_file(old_path: &PathBuf, new_path: &PathBuf) -> Result<(), Box<dyn Error>> {
+    // let old_path = std::path::Path::new(old_path.as_str());
+    // let new_path = std::path::Path::new(new_path.as_str());
     let _ = std::fs::rename(old_path, new_path)?;
     Ok(())
 }
 
 #[derive(Debug)]
-pub struct InputSrc {
-    source: PathBuf,
-}
+pub struct InputSrc(PathBuf);
 
 impl InputSrc {
-    fn new(source: PathBuf) -> Self {
-        Self { source }
+    fn new(path: &PathBuf) -> Option<Self> {
+        let p = path.clone();
+        if p.as_path().is_file() {
+            Some(Self(p))
+        } else {
+            None
+        }
+    }
+
+    fn source(&self) -> &PathBuf {
+        &self.0
     }
 
     fn source_string(&self) -> String {
-        self.source.to_string_lossy().into()
+        self.source().to_string_lossy().into()
     }
 
     fn key(&self) -> String {
-        match self.source.file_stem() {
+        match self.source().file_stem() {
             Some(stem) => stem.to_string_lossy().into(),
             None => "".into(),
         }
@@ -163,11 +111,14 @@ fn walk_path(path: &PathBuf) -> Result<Vec<InputSrc>, Box<dyn Error>> {
     let p = path.as_path();
     let mut paths = vec![];
     if p.is_file() {
-        paths.push(InputSrc::new(p.to_path_buf()));
+        if let Some(input) = InputSrc::new(path) {
+            paths.push(input);
+        }
     } else if p.is_dir() {
         for entry in WalkDir::new(p) {
-            if let Ok(entry) = entry {
-                paths.push(InputSrc::new(entry.path().to_path_buf()));
+            let val = entry.map_or(None, |x| InputSrc::new(&x.path().to_path_buf()));
+            if let Some(input) = val {
+                paths.push(input);
             }
         }
     }
@@ -176,13 +127,46 @@ fn walk_path(path: &PathBuf) -> Result<Vec<InputSrc>, Box<dyn Error>> {
 }
 
 struct PrepInput {
-    input: String,
-    output: String,
+    source: PathBuf,
+    next_stem: String,
+    ext: String,
 }
 
-// impl PrepInput {
-//     fn new() -> Self {}
-// }
+impl PrepInput {
+    fn new(input: &InputSrc, next_stem: &str) -> Self {
+        let ext = input
+            .source()
+            .extension()
+            .map(|i| i.to_string_lossy().into())
+            .unwrap_or("".into());
+
+        Self {
+            source: input.source().to_path_buf(),
+            next_stem: next_stem.into(),
+            ext,
+        }
+    }
+
+    fn source(&self) -> PathBuf {
+        self.source.clone()
+    }
+
+    fn source_string(&self) -> String {
+        self.source.to_string_lossy().into()
+    }
+
+    fn next_file_name(&self) -> String {
+        format!("{}.{}", self.next_stem, self.ext)
+    }
+
+    fn next_path(&self) -> PathBuf {
+        self.source.with_file_name(self.next_file_name())
+    }
+
+    fn next_path_string(&self) -> String {
+        self.next_path().to_string_lossy().into()
+    }
+}
 
 fn hash_map_input(input: Vec<InputSrc>) -> HashMap<String, Vec<InputSrc>> {
     let mut map = HashMap::new();
@@ -198,10 +182,14 @@ pub fn complex_paths(path: PathBuf, mode: RunType) -> Result<(), Box<dyn Error>>
     let input = walk_path(&path)?;
     let map = hash_map_input(input);
 
+    if mode == RunType::Dry {
+        println!("Dry run::");
+    }
+
     for (key, items) in map {
         let supported_input = items
             .iter()
-            .filter(|val| is_supported(&val.source))
+            .filter(|val| is_supported(&val.source()))
             .collect::<Vec<_>>();
         if supported_input.len() > 1 {
             eprintln!(
@@ -213,25 +201,20 @@ pub fn complex_paths(path: PathBuf, mode: RunType) -> Result<(), Box<dyn Error>>
         }
 
         if let Some(item) = supported_input.get(0) {
-            let next_stem = exif_date_time(&item.source)
+            let next_stem = exif_date_time(&item.source())
                 .as_ref()
                 .map(next_file_stem)
                 .flatten();
             if let Some(stem) = next_stem {
-                for input in items.iter() {
-                    let mut name = stem.clone();
-                    if let Some(ext) = input.source.extension() {
-                        name.push_str(".");
-                        let ext = ext.to_string_lossy().to_string();
-                        name.push_str(ext.as_str());
-                    }
-                    let next_path = input.source.with_file_name(name);
-                    println!(
-                        "{} -> {}",
-                        item.source_string(),
-                        next_path.display().to_string()
-                    );
-                }
+                let queue = items
+                    .iter()
+                    .map(|i| PrepInput::new(i, &stem))
+                    .collect::<Vec<PrepInput>>();
+                rename_file_group(&queue, &mode)?;
+            }
+        } else {
+            for item in items.iter() {
+                println!("{} -> Skip", item.source_string());
             }
         }
     }
@@ -239,54 +222,23 @@ pub fn complex_paths(path: PathBuf, mode: RunType) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-pub fn get_new_paths<P: AsRef<Path>>(path: P, mode: RunType) -> Result<(), Box<dyn Error>> {
-    let path = path.as_ref();
-    if path.is_dir() {
-        for entry in WalkDir::new(path) {
-            if let Ok(entry) = entry {
-                let file_path = entry.path();
-                let is_processable =
-                    utils::is_img_ext(&file_path) || utils::is_video_ext(&file_path);
-                if file_path.is_file() && is_processable {
-                    match get_new_path(&file_path) {
-                        Ok(val) => match mode {
-                            RunType::Dry => {
-                                println!("{} -> {}", val.0.as_str(), val.1.as_str());
-                            }
-                            RunType::Exec => {
-                                println!("{} -> {}", val.0.as_str(), val.1.as_str());
-                                rename_file(val.0, val.1)?;
-                            }
-                        },
-                        Err(_) => {
-                            let path_str = file_path.to_str().unwrap_or("XXX");
-                            println!("Missing date: {}", path_str);
-                        }
-                    }
-                } else {
-                    let path_str = file_path.to_str().unwrap_or("XXX");
-                    println!("Skipping: {}", path_str);
+fn rename_file_group(group: &[PrepInput], mode: &RunType) -> Result<(), Box<dyn Error>> {
+    // TODO: Rollback if there is an error in the renaming.
+    // let mut done = vec![];
+    for input in group {
+        match mode {
+            RunType::Exec => match rename_file(&input.source(), &input.next_path()) {
+                Ok(_) => {
+                    println!("{} -> {}", input.source_string(), input.next_path_string());
                 }
-            }
-        }
-    } else if path.is_file() {
-        match get_new_path(path) {
-            Ok(val) => match mode {
-                RunType::Dry => {
-                    println!("{} -> {}", val.0.as_str(), val.1.as_str());
-                }
-                RunType::Exec => {
-                    println!("{} -> {}", val.0.as_str(), val.1.as_str());
-                    rename_file(val.0, val.1)?;
+                Err(err) => {
+                    eprintln!("{} -> {}", input.source_string(), err);
                 }
             },
-            Err(_) => {
-                let path_str = path.to_str().unwrap_or("XXX");
-                println!("Missing date: {}", path_str);
+            RunType::Dry => {
+                println!("{} -> {}", input.source_string(), input.next_path_string());
             }
         }
-    } else {
-        eprintln!("We don't support antying but a directory or a file.");
     }
 
     Ok(())
