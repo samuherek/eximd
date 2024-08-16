@@ -3,7 +3,7 @@ mod hash_file;
 mod rename;
 mod utils;
 use clap::{Parser, Subcommand};
-use exival::file_system::RealFileSystem;
+use eximd::file_system::RealFileSystem;
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -38,9 +38,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(Commands::Rename { exec, path }) => {
             let mode = if exec {
-                exival::config::RunType::Exec
+                eximd::config::RunType::Exec
             } else {
-                exival::config::RunType::Dry
+                eximd::config::RunType::Dry
             };
             let fs = RealFileSystem::new(&mode);
             let path_buf = path.unwrap_or_else(|| {

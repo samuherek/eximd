@@ -199,7 +199,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "exival"
+name = "eximd"
 version = "0.1.0"
 dependencies = [
  "chrono",

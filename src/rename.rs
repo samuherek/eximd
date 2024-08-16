@@ -1,7 +1,7 @@
 use super::exif;
 use super::utils;
-use exival::config::RunType;
-use exival::file_system::FileSystem;
+use eximd::config::RunType;
+use eximd::file_system::FileSystem;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
