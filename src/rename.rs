@@ -21,16 +21,16 @@ struct DateTime {
 
 // We always want to take only the date and time from the string
 // and ignore the miliseconds and the timezone information.
-// When the exif data is created, the 
-// DateTimeOriginal -> is wihtout a time zone usually. If so the date and time is the 
+// When the exif data is created, the
+// DateTimeOriginal -> is wihtout a time zone usually. If so the date and time is the
 // date and time in the current time zone. So the timezone info is irrelevant.
-// It looks like if we don't have a time zone in this tag, it will have the time 
+// It looks like if we don't have a time zone in this tag, it will have the time
 // and date of the timezone the media was taken in.
 // CreationDate -> is with the time zone, but like the above, it will have the
 // date and time in the current time zone time. So we can ignore the time zone.
 //
-// This way, we have the same date and time that is the date and time of the 
-// timezone that the media was taken and is relative time which is what we most likely want. 
+// This way, we have the same date and time that is the date and time of the
+// timezone that the media was taken and is relative time which is what we most likely want.
 fn parse_date<'de, D>(deserializer: D) -> Result<Option<chrono::NaiveDateTime>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -94,6 +94,10 @@ impl InputFile {
         let stem = get_stem(&src);
         let ext = get_ext(&src);
         Self { src, stem, ext }
+    }
+
+    fn hash_key(&self) -> String {
+        self.stem.clone()
     }
 
     fn path(&self) -> &PathBuf {
@@ -169,10 +173,6 @@ impl ExifDateFile {
         }
     }
 
-    fn hash_key(&self) -> String {
-        self.stem.clone()
-    }
-
     fn next_file_stem(&self) -> Option<String> {
         // TODO: Parametize the format of the date?
         self.date_time_original
@@ -201,8 +201,8 @@ pub fn exif_date_files(files: &[InputFile]) -> Vec<ExifDateFile> {
 }
 
 struct FileGroup<'a> {
-    primary: Vec<&'a ExifDateFile>,
-    secondary: Vec<&'a ExifDateFile>,
+    primary: Vec<&'a InputFile>,
+    secondary: Vec<&'a InputFile>,
 }
 
 impl<'a> FileGroup<'a> {
@@ -213,11 +213,11 @@ impl<'a> FileGroup<'a> {
         }
     }
 
-    fn push_primary(&mut self, file: &'a ExifDateFile) {
+    fn push_primary(&mut self, file: &'a InputFile) {
         self.primary.push(file)
     }
 
-    fn push_secondary(&mut self, file: &'a ExifDateFile) {
+    fn push_secondary(&mut self, file: &'a InputFile) {
         self.secondary.push(file)
     }
 }
@@ -230,7 +230,12 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
-pub fn process_exif_files<F: FileSystem>(fs: &F, files: &[ExifDateFile]) {
+fn get_exif_file(item: &InputFile) -> ExifDateFile {
+    let exif_date = exif_date_time(item.path()).unwrap_or_default();
+    ExifDateFile::new(item, &exif_date)
+}
+
+pub fn process_files<F: FileSystem>(fs: &F, files: &[InputFile]) {
     let mut groups: HashMap<String, FileGroup> = HashMap::new();
     let mut errors: Vec<ProcessError> = Vec::new();
 
@@ -263,6 +268,7 @@ pub fn process_exif_files<F: FileSystem>(fs: &F, files: &[ExifDateFile]) {
         //      same name (we assume they had different extensions).
         } else if prim_len > 0 && sec_len == 0 {
             for item in group.primary {
+                let item = get_exif_file(item);
                 if let Some(next_src) = item.next_file_src() {
                     match fs.rename(&item.src.as_path(), &next_src.as_path()) {
                         Ok(_) => {
@@ -298,6 +304,7 @@ pub fn process_exif_files<F: FileSystem>(fs: &F, files: &[ExifDateFile]) {
                 .primary
                 .get(0)
                 .expect("At this point we need to have one exif file");
+            let prim_file = get_exif_file(prim_file);
             if let Some(next_stem) = prim_file.next_file_stem() {
                 let prim_prev_src = prim_file.src.as_path();
                 let prim_next_file_src = prim_file
@@ -319,6 +326,7 @@ pub fn process_exif_files<F: FileSystem>(fs: &F, files: &[ExifDateFile]) {
                     }
                 }
                 for item in group.secondary {
+                    let item = get_exif_file(item);
                     let sec_prev_src = item.src.as_path();
                     let sec_next_file_src = item
                         .src
@@ -389,7 +397,7 @@ pub fn process_exif_files<F: FileSystem>(fs: &F, files: &[ExifDateFile]) {
 
 pub fn print_mode(mode: &RunType) {
     match mode {
-        RunType::Dry => println!("Dry run results::"),
+        RunType::Dry => println!("DRY RUN:: run `rename --exec 'path/to' to commit"),
         _ => {}
     }
 }

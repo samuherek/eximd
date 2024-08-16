@@ -48,9 +48,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .expect("Did not provide path and couldn't read current dir.")
             });
             let files = rename::collect_files(&path_buf);
-            let files = rename::exif_date_files(&files);
             rename::print_mode(&mode);
-            rename::process_exif_files(&fs, &files);
+            rename::process_files(&fs, &files);
         }
         _ => {
             println!("Incorrect usage");
