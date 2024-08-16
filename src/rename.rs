@@ -4,18 +4,19 @@ use exival::config::RunType;
 use exival::file_system::FileSystem;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::error::Error;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use walkdir::WalkDir;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 struct DateTime {
     file_name: String,
     #[serde(default, deserialize_with = "parse_date")]
     date_time_original: Option<chrono::NaiveDateTime>,
+    #[serde(default, deserialize_with = "parse_date")]
+    creation_date: Option<chrono::NaiveDateTime>,
 }
 
 fn parse_date<'de, D>(deserializer: D) -> Result<Option<chrono::NaiveDateTime>, D::Error>
@@ -56,215 +57,326 @@ fn exif_date_time<P: AsRef<Path>>(path: P) -> Option<DateTime> {
     }
 }
 
-fn next_file_stem(date: &DateTime) -> Option<String> {
-    date.date_time_original
-        .map(|date| date.format("%Y-%m-%d_%H.%M.%S").to_string())
-}
+struct FilePath(PathBuf);
 
-// fn rename_file(old_path: &PathBuf, new_path: &PathBuf) -> Result<(), Box<dyn Error>> {
-//     let _ = std::fs::rename(old_path, new_path)?;
-//     Ok(())
-// }
-
-#[derive(Debug)]
-pub struct InputSrc(PathBuf);
-
-impl InputSrc {
-    fn new(path: &PathBuf) -> Option<Self> {
-        let p = path.clone();
-        if p.as_path().is_file() {
-            Some(Self(p))
-        } else {
-            None
-        }
+impl FilePath {
+    fn new(path: &Path) -> Self {
+        Self(path.to_path_buf())
     }
 
-    fn source(&self) -> &PathBuf {
+    fn value(&self) -> &PathBuf {
         &self.0
     }
-
-    fn source_string(&self) -> String {
-        self.source().to_string_lossy().into()
-    }
-
-    fn key(&self) -> String {
-        match self.source().file_stem() {
-            Some(stem) => stem.to_string_lossy().into(),
-            None => "".into(),
-        }
-    }
-
-    fn print_skip(&self) {
-        println!("{} -> Skip", self.source_string());
-    }
 }
 
-fn is_supported(path: &Path) -> bool {
-    path.is_file() && (utils::is_img_ext(path) || utils::is_video_ext(path))
-}
-
-pub fn walk_path(path: &PathBuf) -> Result<Vec<InputSrc>, Box<dyn Error>> {
-    let p = path.as_path();
-    let mut paths = vec![];
-    if p.is_file() {
-        if let Some(input) = InputSrc::new(path) {
-            paths.push(input);
-        }
-    } else if p.is_dir() {
-        for entry in WalkDir::new(p) {
-            let val = entry.map_or(None, |x| InputSrc::new(&x.path().to_path_buf()));
-            if let Some(input) = val {
-                paths.push(input);
-            }
-        }
-    }
-
-    Ok(paths)
-}
-
-struct PrepInput {
-    source: PathBuf,
-    next_stem: String,
+pub struct InputFile {
+    src: PathBuf,
+    stem: String,
     ext: String,
 }
 
-impl PrepInput {
-    fn new(input: &InputSrc, next_stem: &str) -> Self {
-        let ext = input
-            .source()
-            .extension()
-            .map(|i| i.to_string_lossy().into())
-            .unwrap_or_default();
+impl InputFile {
+    fn new(file: &FilePath) -> Self {
+        let src = file.value().to_owned();
+        let stem = get_stem(&src);
+        let ext = get_ext(&src);
+        Self { src, stem, ext }
+    }
 
+    fn path(&self) -> &PathBuf {
+        &self.src
+    }
+}
+
+fn get_stem(path: &Path) -> String {
+    path.file_stem()
+        .expect("To have a file stem")
+        .to_string_lossy()
+        .into()
+}
+
+fn get_ext(path: &Path) -> String {
+    path.extension()
+        .map(|i| i.to_string_lossy().into())
+        .unwrap_or_default()
+}
+
+fn is_primary_ext(ext: &str) -> bool {
+    utils::is_img(ext) || utils::is_video(ext)
+}
+
+// Walk the dir to collect all the files and ignore dirs -> We have a list of paths to check
+pub fn collect_files(path: &Path) -> Vec<InputFile> {
+    let mut files = vec![];
+    // We support direct path
+    if path.is_file() {
+        let file = FilePath::new(path);
+        files.push(InputFile::new(&file));
+    // We support a directory and we walk all the paths.
+    } else if path.is_dir() {
+        for entry in WalkDir::new(path) {
+            let entry = entry.map_or(None, |x| {
+                let x_path = x.path();
+                if x_path.is_file() {
+                    Some(FilePath::new(x_path))
+                } else {
+                    None
+                }
+            });
+            if let Some(entry) = entry {
+                files.push(InputFile::new(&entry));
+            }
+        }
+    } else {
+        eprintln!(
+            "Error: path is neither a file niether a dir: {}",
+            path.display().to_string()
+        );
+    }
+
+    files
+}
+
+pub struct ExifDateFile {
+    src: PathBuf,
+    stem: String,
+    ext: String,
+    date_time_original: Option<chrono::NaiveDateTime>,
+    creation_date: Option<chrono::NaiveDateTime>,
+}
+
+impl ExifDateFile {
+    fn new(file: &InputFile, info: &DateTime) -> Self {
         Self {
-            source: input.source().to_path_buf(),
-            next_stem: next_stem.into(),
-            ext,
+            src: file.src.clone(),
+            stem: file.stem.clone(),
+            ext: file.ext.clone(),
+            date_time_original: info.date_time_original,
+            creation_date: info.creation_date,
         }
     }
 
-    fn source(&self) -> PathBuf {
-        self.source.clone()
+    fn hash_key(&self) -> String {
+        self.stem.clone()
     }
 
-    fn source_string(&self) -> String {
-        self.source.to_string_lossy().into()
+    fn next_file_stem(&self) -> Option<String> {
+        // TODO: Parametize the format of the date?
+        self.date_time_original
+            .or(self.creation_date)
+            .map(|date| date.format("%Y-%m-%d_%H.%M.%S").to_string())
     }
 
-    fn next_file_name(&self) -> String {
-        format!("{}.{}", self.next_stem, self.ext)
+    fn next_file_name(&self) -> Option<String> {
+        self.next_file_stem().map(|x| format!("{}.{}", x, self.ext))
     }
 
-    fn next_path(&self) -> PathBuf {
-        self.source.with_file_name(self.next_file_name())
-    }
-
-    fn next_path_string(&self) -> String {
-        self.next_path().to_string_lossy().into()
-    }
-
-    fn print_rename(&self) {
-        println!("{} -> {}", self.source_string(), self.next_path_string());
-    }
-
-    fn print_error(&self, err: std::io::Error) {
-        eprintln!("{} -> {}", self.source_string(), err);
+    fn next_file_src(&self) -> Option<PathBuf> {
+        self.next_file_name()
+            .map(|name| self.src.with_file_name(name))
     }
 }
 
-fn hash_map_input(input: &[InputSrc]) -> HashMap<String, Vec<&InputSrc>> {
-    let mut map = HashMap::new();
-
-    for item in input {
-        map.entry(item.key()).or_insert(Vec::new()).push(item);
-    }
-
-    map
+pub fn exif_date_files(files: &[InputFile]) -> Vec<ExifDateFile> {
+    files
+        .iter()
+        .map(|file| {
+            let exif_date = exif_date_time(file.path()).unwrap_or_default();
+            ExifDateFile::new(file, &exif_date)
+        })
+        .collect()
 }
 
-fn rename_file_group<F: FileSystem>(
-    fs: &F,
-    group: &[PrepInput],
-    config: RunType,
-) -> Result<(), Box<dyn Error>> {
-    // TODO: Rollback if there is an error in the renaming.
-    // let mut done = vec![];
-    for input in group {
-        match config {
-            RunType::Exec => match fs.rename(&input.source(), &input.next_path()) {
-                Ok(_) => input.print_rename(),
-                Err(err) => input.print_error(err),
-            },
-            RunType::Dry => input.print_rename(),
+struct FileGroup<'a> {
+    primary: Vec<&'a ExifDateFile>,
+    secondary: Vec<&'a ExifDateFile>,
+}
+
+impl<'a> FileGroup<'a> {
+    fn new() -> Self {
+        Self {
+            primary: Vec::new(),
+            secondary: Vec::new(),
         }
     }
 
-    Ok(())
+    fn push_primary(&mut self, file: &'a ExifDateFile) {
+        self.primary.push(file)
+    }
+
+    fn push_secondary(&mut self, file: &'a ExifDateFile) {
+        self.secondary.push(file)
+    }
 }
 
-pub fn process_input<F: FileSystem>(
-    fs: &F,
-    input: &[InputSrc],
-    config: RunType,
-) -> Result<(), Box<dyn Error>> {
-    for (key, items) in hash_map_input(input) {
-        let supported_input = items
-            .iter()
-            .filter(|val| is_supported(val.source()))
-            .collect::<Vec<_>>();
-        if supported_input.len() > 1 {
-            eprintln!(
-                "We got more supported files with the same name for: {}",
-                key
-            );
-            println!("Skipping...");
-            continue;
-        }
+enum ProcessError {
+    UncertainPriaryFile(Vec<PathBuf>),
+}
 
-        if let Some(item) = supported_input.get(0) {
-            let next_stem = exif_date_time(&item.source())
-                .as_ref()
-                .map(next_file_stem)
-                .flatten();
-            if let Some(stem) = next_stem {
-                let queue: Vec<_> = items.iter().map(|i| PrepInput::new(i, &stem)).collect();
-                rename_file_group(fs, &queue, config)?;
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+pub fn process_exif_files<F: FileSystem>(fs: &F, files: &[ExifDateFile]) {
+    let mut groups: HashMap<String, FileGroup> = HashMap::new();
+    let mut errors: Vec<ProcessError> = Vec::new();
+
+    for item in files {
+        let g = groups.entry(item.hash_key()).or_insert(FileGroup::new());
+        if is_primary_ext(&item.ext) {
+            g.push_primary(&item);
+        } else {
+            g.push_secondary(&item);
+        }
+    }
+
+    // the cases we have
+    for (_key, group) in groups {
+        let prim_len = group.primary.len();
+        let sec_len = group.secondary.len();
+
+        // 1. In case we have more primary files with a possible date
+        // and we have some secondary files as well, we don't konw
+        // which "date_name" to choose. So we do nothing and report it
+        // to the user. Otherwise, it's either just primary files
+        // or it's
+        if prim_len > 1 && sec_len > 0 {
+            let prim = group.primary.iter().map(|x| x.src.clone());
+            let sec = group.secondary.iter().map(|x| x.src.clone());
+            let paths = prim.chain(sec).collect::<Vec<_>>();
+            errors.push(ProcessError::UncertainPriaryFile(paths));
+        // 2. we have only primary files and then we don't need a "rollback"
+        //      and we can just rename one by one although they originally had the
+        //      same name (we assume they had different extensions).
+        } else if prim_len > 0 && sec_len == 0 {
+            for item in group.primary {
+                if let Some(next_src) = item.next_file_src() {
+                    match fs.rename(&item.src.as_path(), &next_src.as_path()) {
+                        Ok(_) => {
+                            println!(
+                                "{} -> {}",
+                                path_to_string(&item.src),
+                                path_to_string(&next_src)
+                            );
+                        }
+                        Err(err) => {
+                            eprintln!("{} -> {}", path_to_string(&item.src), err);
+                        }
+                    }
+                } else {
+                    println!(
+                        "{} -> Did not find clear exif date",
+                        path_to_string(&item.src)
+                    )
+                }
+            }
+        // 3. We have only the secondary files. We don't rename at this point.
+        //      We might add this  in the future if we find it usefull.
+        } else if prim_len == 0 && sec_len > 0 {
+            for item in group.secondary {
+                println!("{} -> Not a media file", path_to_string(&item.src));
+            }
+        // 4. we have exactly one prim file and some secondary files and if something
+        //      fails here, we need a rollback all the changes within this group
+        } else if prim_len == 1 && sec_len > 0 {
+            let mut processed = vec![];
+            let mut needs_rollback = false;
+            let prim_file = group
+                .primary
+                .get(0)
+                .expect("At this point we need to have one exif file");
+            if let Some(next_stem) = prim_file.next_file_stem() {
+                let prim_prev_src = prim_file.src.as_path();
+                let prim_next_file_src = prim_file
+                    .next_file_src()
+                    .expect("We already have a stem. We need to have the src");
+                let prim_next_src = prim_next_file_src.as_path();
+                match fs.rename(prim_prev_src, prim_next_src) {
+                    Ok(_) => {
+                        println!(
+                            "{} -> {}",
+                            path_to_string(prim_prev_src),
+                            path_to_string(prim_next_src)
+                        );
+                        processed.push((prim_prev_src.to_path_buf(), prim_next_src.to_path_buf()));
+                    }
+                    Err(err) => {
+                        eprintln!("{} -> {}", path_to_string(&prim_file.src), err);
+                        needs_rollback = true;
+                    }
+                }
+                for item in group.secondary {
+                    let sec_prev_src = item.src.as_path();
+                    let sec_next_file_src = item
+                        .src
+                        .with_file_name(format!("{}.{}", next_stem, item.ext));
+                    let sec_next_src = sec_next_file_src.as_path();
+                    if !needs_rollback {
+                        match fs.rename(sec_prev_src, sec_next_src) {
+                            Ok(_) => {
+                                println!(
+                                    "{} -> {}",
+                                    path_to_string(sec_prev_src),
+                                    path_to_string(sec_next_src)
+                                );
+                                processed
+                                    .push((sec_prev_src.to_path_buf(), sec_next_src.to_path_buf()));
+                            }
+                            Err(err) => {
+                                eprintln!("{} -> {}", path_to_string(&prim_file.src), err);
+                                needs_rollback = true;
+                            }
+                        }
+                    }
+                }
+
+                if needs_rollback {
+                    for file in processed {
+                        match fs.rename(&file.1, &file.0) {
+                            Ok(_) => {
+                                println!(
+                                    "{} -> {} (ROLLBACK)",
+                                    path_to_string(&file.1),
+                                    path_to_string(&file.0)
+                                );
+                            }
+                            Err(err) => {
+                                eprintln!(
+                                    "ERROR: rolling back the {}: {}",
+                                    path_to_string(&file.1),
+                                    err
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                for item in group.primary.iter().chain(group.secondary.iter()) {
+                    println!(
+                        "{} -> Did not find clear exif date",
+                        path_to_string(&item.src)
+                    )
+                }
             }
         } else {
-            for item in items.into_iter() {
-                item.print_skip();
-            }
+            unreachable!();
         }
     }
 
-    Ok(())
+    for error in errors {
+        match error {
+            ProcessError::UncertainPriaryFile(paths) => {
+                for path in paths {
+                    println!("{} -> Uncertain Primary file", path_to_string(&path));
+                }
+            }
+        }
+    }
 }
 
 pub fn print_mode(mode: &RunType) {
     match mode {
         RunType::Dry => println!("Dry run results::"),
         _ => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use exival::file_system::MockFileSystem;
-
-    #[test]
-    fn test_rename_group_with_mock() {
-        let fs = MockFileSystem::new();
-        let input_src = InputSrc::new(&PathBuf::from("file.txt")).unwrap();
-        let prep_input = PrepInput::new(&input_src, "new_file");
-
-        let _ = rename_file_group(&fs, &[prep_input], RunType::Exec);
-        let result = fs.renamed_files.borrow();
-        let expected = vec![(PathBuf::from("file.txt"), PathBuf::from("new_file.txt"))];
-        println!("result is:");
-        println!("{:?}", result);
-        println!("{:?}", expected);
-
-        assert_eq!(*fs.renamed_files.borrow(), expected);
     }
 }

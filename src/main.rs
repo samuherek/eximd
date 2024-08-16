@@ -47,9 +47,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
             });
-            let input_paths = rename::walk_path(&path_buf)?;
+            let files = rename::collect_files(&path_buf);
+            let files = rename::exif_date_files(&files);
             rename::print_mode(&mode);
-            rename::process_input(&fs, &input_paths, mode)?;
+            rename::process_exif_files(&fs, &files);
         }
         _ => {
             println!("Incorrect usage");

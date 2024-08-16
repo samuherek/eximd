@@ -31,3 +31,15 @@ pub fn is_img_ext(path: &Path) -> bool {
     let ext = get_ext(path);
     IMGS.contains(&ext.as_str())
 }
+
+pub fn is_video(ext: &str) -> bool {
+    let ext = ext.to_lowercase();
+    let ext = ext.as_str();
+    VIDEOS.contains(&ext)
+}
+
+pub fn is_img(ext: &str) -> bool {
+    let ext = ext.to_lowercase();
+    let ext = ext.as_str();
+    IMGS.contains(&ext)
+}
