@@ -2,6 +2,7 @@
 
 # ExiMd
 
+![eximd](https://github.com/user-attachments/assets/cca8b788-4d2f-4e43-84e2-4096642bfbb6)
 
 Eeasily rename your media into a timestamp file names.
 
@@ -26,9 +27,11 @@ This has been a big pain for me personally, and thus this little app.
 ## Usage
 
 Do a dry run without a rename to see what the output is going to be:
+
 `eximd rename "path/to/dir_or_file"`
 
 If you are sure that you are ok with the next file names, you can commit the changes with:
+
 `eximd rename --exec "path/to/dir_or_file"`
 
 ## TODO:
