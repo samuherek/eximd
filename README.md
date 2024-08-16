@@ -32,6 +32,10 @@ This has been a big pain for me personally, and thus this little app.
 
 ## Usage
 
+**NOTE**
+
+Currently it reliese on the `exiftool` dependency that needs to be installed on your system.
+
 Do a dry run without a rename to see what the output is going to be:
 
 `eximd rename "path/to/dir_or_file"`
