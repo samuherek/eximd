@@ -19,12 +19,25 @@ struct DateTime {
     creation_date: Option<chrono::NaiveDateTime>,
 }
 
+// We always want to take only the date and time from the string
+// and ignore the miliseconds and the timezone information.
+// When the exif data is created, the 
+// DateTimeOriginal -> is wihtout a time zone usually. If so the date and time is the 
+// date and time in the current time zone. So the timezone info is irrelevant.
+// It looks like if we don't have a time zone in this tag, it will have the time 
+// and date of the timezone the media was taken in.
+// CreationDate -> is with the time zone, but like the above, it will have the
+// date and time in the current time zone time. So we can ignore the time zone.
+//
+// This way, we have the same date and time that is the date and time of the 
+// timezone that the media was taken and is relative time which is what we most likely want. 
 fn parse_date<'de, D>(deserializer: D) -> Result<Option<chrono::NaiveDateTime>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let s: Option<String> = Option::deserialize(deserializer)?;
     if let Some(s) = s {
+        let s = &s[..19];
         match chrono::NaiveDateTime::parse_from_str(&s, "%Y:%m:%d %H:%M:%S") {
             Ok(dt) => Ok(Some(dt)),
             Err(_) => Ok(None),
