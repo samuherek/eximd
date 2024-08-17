@@ -9,11 +9,8 @@ pub const IMGS: &'static [&'static str] = &[
 pub const VIDEOS: &'static [&'static str] = &["avi", "m4v", "mov", "mp4", "mpg"];
 
 fn get_ext(path: &Path) -> String {
-    let ext = path
-        .extension()
-        .unwrap_or(std::ffi::OsStr::new("xxx"))
-        .to_ascii_lowercase();
-    ext.to_str().unwrap_or("xxx").to_string()
+    let ext = path.extension().unwrap_or_default().to_ascii_lowercase();
+    ext.to_str().unwrap_or_default().to_string()
 }
 
 pub fn is_video_ext(path: &Path) -> bool {

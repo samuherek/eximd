@@ -1,5 +1,4 @@
-mod exif;
-mod hash_file;
+mod exif_local;
 mod rename;
 mod utils;
 use clap::{Parser, Subcommand};
@@ -49,7 +48,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             });
             let files = rename::collect_files(&path_buf);
             rename::print_mode(&mode);
-            rename::process_files(&fs, &files);
+            rename::print_next_exif(&files);
+            // rename::process_files(&fs, &files);
         }
         _ => {
             println!("Incorrect usage");

@@ -1,4 +1,4 @@
-use super::exif;
+use super::exif_local;
 use super::utils;
 use eximed::config::RunType;
 use eximed::file_system::FileSystem;
@@ -8,6 +8,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use walkdir::WalkDir;
+extern crate exif;
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
@@ -47,6 +48,26 @@ where
     }
 }
 
+fn exif_date_time_rs<P: AsRef<Path>>(path: P) -> Option<DateTime> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf = std::io::BufReader::new(&file);
+    let exifreader = exif::Reader::new();
+    let exif = exifreader.read_from_container(&mut buf).ok()?;
+    let date_time = exif.get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY);
+    println!("datetime: {:?}", date_time);
+    for field in exif.fields() {
+    println!("field: {:?}", field);
+    }
+    None
+}
+
+pub fn print_next_exif(files: &[InputFile]) {
+    for file in files {
+        println!("file {:?}", file.src);
+        exif_date_time_rs(&file.src);
+    }
+}
+
 fn exif_date_time<P: AsRef<Path>>(path: P) -> Option<DateTime> {
     let cmd = Command::new("exiftool")
         .args(["-j", path.as_ref().to_str().unwrap()])
@@ -54,7 +75,7 @@ fn exif_date_time<P: AsRef<Path>>(path: P) -> Option<DateTime> {
         .expect("Exiftool command did not work");
 
     let data = String::from_utf8(cmd.stdout).expect("To convert the utf8 into a string");
-    let value = match exif::get_one_exif_input(&data) {
+    let value = match exif_local::get_one_exif_input(&data) {
         Ok(value) => value,
         Err(err) => {
             eprintln!("Error: {}", err);

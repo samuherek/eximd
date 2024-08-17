@@ -1,8 +1,7 @@
 /target
 duplicates.txt
 test_output/
-test_src/
-test_src_2/
+test_src*/
 input1.png
 input1a.png
 input2.png
