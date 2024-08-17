@@ -1,7 +1,6 @@
-mod exif_local;
-mod rename;
-mod utils;
+mod commands;
 use clap::{Parser, Subcommand};
+use commands::rename;
 use eximed::file_system::RealFileSystem;
 use std::error::Error;
 use std::path::PathBuf;
@@ -16,6 +15,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Test,
+    Dups {
+        path: Option<PathBuf>,
+    },
     Rename {
         path: Option<PathBuf>,
         #[arg(short, long)]
@@ -25,15 +27,18 @@ enum Commands {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    // hash_file::calc_hashing()?;
-    // exif::find_duplicates().expect("To just work.");
-    // exif::get_key_map().expect("To just work.");
-    // rename::rename("test_src/IMG_2213.DNG").expect("This to work");
 
     match cli.command {
         Some(Commands::Test) => {
             println!("Test success.");
             // exif::read_with_rs()?;
+        }
+        Some(Commands::Dups { path }) => {
+            let path_buf = path.unwrap_or_else(|| {
+                std::env::current_dir()
+                    .expect("Did not provide path and couldn't read current dir.")
+            });
+            commands::dups::exec(&path_buf)?;
         }
         Some(Commands::Rename { exec, path }) => {
             let mode = if exec {
@@ -46,9 +51,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
             });
-            let files = rename::collect_files(&path_buf);
+            let files = eximed::core::file::collect_files(&path_buf);
             rename::print_mode(&mode);
-            rename::print_next_exif(&files);
+            rename::process_files(&fs, &files);
         }
         _ => {
             println!("Incorrect usage");
