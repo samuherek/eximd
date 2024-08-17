@@ -83,7 +83,7 @@ jobs:
     - name: Update Homebrew Formula
       run: |
         VERSION=$GITHUB_REF_NAME
-        MAC_ARM_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/dips-${VERSION}-aarch64-apple-darwin.tar.gz"
+        MAC_ARM_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/eximed-${VERSION}-aarch64-apple-darwin.tar.gz"
         SHA_FILE="dips-${VERSION}-aarch64-apple-darwin.tar.gz.sha256"
         MAC_ARM_SHA256=$(cat $SHA_FILE | awk '{ print $1 }')
         FORMULA_PATH="eximed.rb"
