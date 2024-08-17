@@ -1,9 +1,9 @@
 use chrono::NaiveDateTime;
-use eximed::config::RunType;
-use eximed::core::exif::{self, ExifMetadata};
-use eximed::core::file::InputFile;
-use eximed::core::utils;
-use eximed::file_system::FileSystem;
+use eximd::config::RunType;
+use eximd::core::exif::{self, ExifMetadata};
+use eximd::core::file::InputFile;
+use eximd::core::utils;
+use eximd::file_system::FileSystem;
 use std::collections::HashMap;
 use std::path::PathBuf;
 

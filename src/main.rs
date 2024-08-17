@@ -1,7 +1,7 @@
 mod commands;
 use clap::{Parser, Subcommand};
 use commands::rename;
-use eximed::file_system::RealFileSystem;
+use eximd::file_system::RealFileSystem;
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -42,16 +42,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(Commands::Rename { exec, path }) => {
             let mode = if exec {
-                eximed::config::RunType::Exec
+                eximd::config::RunType::Exec
             } else {
-                eximed::config::RunType::Dry
+                eximd::config::RunType::Dry
             };
             let fs = RealFileSystem::new(&mode);
             let path_buf = path.unwrap_or_else(|| {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
             });
-            let files = eximed::core::file::collect_files(&path_buf);
+            let files = eximd::core::file::collect_files(&path_buf);
             rename::print_mode(&mode);
             rename::process_files(&fs, &files);
         }
