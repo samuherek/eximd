@@ -1,6 +1,6 @@
 <div align="center">
 
-# ExiMed
+# ExiMd
 
 ![eximd](https://github.com/user-attachments/assets/cca8b788-4d2f-4e43-84e2-4096642bfbb6)
 
