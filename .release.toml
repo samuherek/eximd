@@ -1,0 +1,11 @@
+# .release.toml
+sign-commit = false
+sign-tag = false
+
+[release]
+tag-name = "v{{version}}"
+registry = ""  # Leave empty to prevent publishing to crates.io
+
+[features]
+all = []
+default = []
