@@ -3,7 +3,7 @@ sign-commit = false
 sign-tag = false
 
 [release]
-tag-name = "v{{version}}"
+tag-name = "cli-v{{version}}"
 registry = ""  # Leave empty to prevent publishing to crates.io
 
 [features]

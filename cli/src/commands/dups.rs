@@ -1,6 +1,6 @@
-use eximd::core::exif::{get_exif_metadata, ExifMetadata};
-use eximd::core::file::collect_files;
-use eximd::core::utils;
+use core::exif::{get_exif_metadata, ExifMetadata};
+use core::file::collect_files;
+use core::utils;
 use std::collections::HashSet;
 use std::error::Error;
 use std::io::Write;

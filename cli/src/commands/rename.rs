@@ -1,15 +1,15 @@
+use super::super::config::RunType;
+use super::super::file_system::FileSystem;
 use chrono::NaiveDateTime;
-use eximd::config::RunType;
-use eximd::core::exif::{self, ExifMetadata};
-use eximd::core::file::InputFile;
-use eximd::core::utils;
-use eximd::file_system::FileSystem;
+use core::exif::{self, ExifMetadata};
+use core::file::InputFile;
+use core::utils;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub struct ExifDateFile {
     src: PathBuf,
-    stem: String,
+    _stem: String,
     ext: String,
     date_time_original: Option<NaiveDateTime>,
     creation_date: Option<NaiveDateTime>,
@@ -19,7 +19,7 @@ impl ExifDateFile {
     fn new(file: &InputFile, info: &ExifMetadata) -> Self {
         Self {
             src: file.src.clone(),
-            stem: file.stem.clone(),
+            _stem: file.stem.clone(),
             ext: file.ext.clone(),
             date_time_original: info.date_time_original,
             creation_date: info.creation_date,

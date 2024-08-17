@@ -29,7 +29,7 @@ pub struct MockFileSystem {
 }
 
 impl MockFileSystem {
-    pub fn new() -> Self {
+    pub fn _new() -> Self {
         Self {
             renamed_files: std::cell::RefCell::new(vec![]),
         }

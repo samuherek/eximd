@@ -1,0 +1,9 @@
+[package]
+name = "eximd"
+version = "0.1.5"
+edition = "2021"
+
+[dependencies]
+core = { path = "../core" }
+chrono = { version = "0.4.38", features = ["serde"] }
+clap = { version = "4.5.15", features = ["derive"] }

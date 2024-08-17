@@ -45,7 +45,6 @@ pub fn is_primary_ext(ext: &str) -> bool {
     is_img(ext) || is_video(ext)
 }
 
-
 pub fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }

@@ -29,11 +29,11 @@ pub struct ExifMetadata {
     file_type: Option<String>,
     file_type_extension: Option<String>,
     image_width: Option<usize>,
-    image_height: Option<usize>,
+    _image_height: Option<usize>,
     #[serde(default, deserialize_with = "parse_date")]
-    date_created: Option<NaiveDateTime>,
+    _date_created: Option<NaiveDateTime>,
     #[serde(default, deserialize_with = "parse_date")]
-    create_date: Option<NaiveDateTime>,
+    _create_date: Option<NaiveDateTime>,
     #[serde(default, deserialize_with = "parse_date")]
     pub date_time_original: Option<NaiveDateTime>,
     #[serde(default, deserialize_with = "parse_date")]
