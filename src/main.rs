@@ -49,7 +49,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             let files = rename::collect_files(&path_buf);
             rename::print_mode(&mode);
             rename::print_next_exif(&files);
-            // rename::process_files(&fs, &files);
         }
         _ => {
             println!("Incorrect usage");
