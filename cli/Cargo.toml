@@ -7,3 +7,4 @@ edition = "2021"
 core = { path = "../core" }
 chrono = { version = "0.4.38", features = ["serde"] }
 clap = { version = "4.5.15", features = ["derive"] }
+indicatif = "0.17.8"

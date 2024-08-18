@@ -76,7 +76,7 @@ where
 {
     let s: Option<String> = Option::deserialize(deserializer)?;
     if let Some(s) = s {
-        let s = &s[..19];
+        let s = if s.len() >= 18 { &s[..19] } else { &s };
         match chrono::NaiveDateTime::parse_from_str(&s, "%Y:%m:%d %H:%M:%S") {
             Ok(dt) => Ok(Some(dt)),
             Err(_) => Ok(None),
