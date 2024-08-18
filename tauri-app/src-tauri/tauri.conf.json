@@ -6,7 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "tauri-app",
+    "productName": "ExiMd",
     "version": "0.1.0"
   },
   "tauri": {
@@ -15,13 +15,20 @@
       "shell": {
         "all": false,
         "open": true
+      },
+      "dialog": {
+          "all": true
+      },
+      "path": {
+          "all": true
       }
     },
     "windows": [
       {
-        "title": "tauri-app",
+        "title": "ExiMd",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "fileDropEnabled": true
       }
     ],
     "security": {
