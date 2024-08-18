@@ -29,8 +29,11 @@ jobs:
       run: |
         APP_NAME="eximd"
         VERSION="${GITHUB_REF_NAME}"
+        echo $APP_NAME
+        echo $VERSION
         OS="aarch64-apple-darwin"
         TAR_FILE="${APP_NAME}-${VERSION}-${OS}.tar.gz"
+        mv target/aarch64-apple-darwin/release/cli target/aarch64-apple-darwin/release/$APP_NAME
         tar -czvf $TAR_FILE -C target/aarch64-apple-darwin/release $APP_NAME
         shasum -a 256 $TAR_FILE > ${TAR_FILE}.sha256
 
