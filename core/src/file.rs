@@ -1,3 +1,4 @@
+use super::utils;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -13,10 +14,18 @@ impl FilePath {
     }
 }
 
+#[derive(Debug, serde::Serialize, Clone)]
+pub enum FileType {
+    IMG,
+    VIDEO,
+    OTHER,
+}
+
 pub struct InputFile {
     pub src: PathBuf,
     pub stem: String,
     pub ext: String,
+    pub file_type: FileType,
 }
 
 impl InputFile {
@@ -24,7 +33,13 @@ impl InputFile {
         let src = file.value().to_owned();
         let stem = get_stem(&src);
         let ext = get_ext(&src);
-        Self { src, stem, ext }
+        let file_type = file_type_from_str(&ext);
+        Self {
+            src,
+            stem,
+            ext,
+            file_type,
+        }
     }
 
     pub fn hash_key(&self) -> String {
@@ -47,6 +62,16 @@ fn get_ext(path: &Path) -> String {
     path.extension()
         .map(|i| i.to_string_lossy().into())
         .unwrap_or_default()
+}
+
+fn file_type_from_str(ext: &str) -> FileType {
+    if utils::is_img(ext) {
+        FileType::IMG
+    } else if utils::is_video(ext) {
+        FileType::VIDEO
+    } else {
+        FileType::OTHER
+    }
 }
 
 // Accept either a directory or a file path.

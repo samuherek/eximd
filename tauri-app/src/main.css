@@ -1,3 +1,58 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* --toastify-color-light: #000; */
+/* --toastify-color-dark: #333; */
+/* --toastify-color-info: #fff; */
+/* --toastify-color-success: #00933c; */
+/* --toastify-color-warning: #ffcb25; */
+/* --toastify-color-error: #e73830; */
+/* --toastify-color-transparent: rgba(255, 255, 255, 0.7); */
+/**/
+/* --toastify-icon-color-info: var(--toastify-color-info); */
+/* --toastify-icon-color-success: var(--toastify-color-success); */
+/* --toastify-icon-color-warning: var(--toastify-color-warning); */
+/* --toastify-icon-color-error: var(--toastify-color-error); */
+/**/
+/* --toastify-toast-width: 330px; */
+/* --toastify-toast-background: #fff; */
+/* --toastify-toast-min-height: 54px; */
+/* --toastify-toast-max-height: 800px; */
+/* --toastify-font-family: inherit; */
+/* --toastify-z-index: 9999; */
+/**/
+/* --toastify-text-color-light: #fff; */
+/* --toastify-text-color-dark: #fff; */
+/**/
+/* --toastify-text-color-info: #fff; */
+/* --toastify-text-color-success: #fff; */
+/* --toastify-text-color-warning: #fff; */
+/* --toastify-text-color-error: #fff; */
+/**/
+/* --toastify-spinner-color: #616161; */
+/* --toastify-spinner-color-empty-area: #e0e0e0; */
+/**/
+/* --toastify-color-progress-light: #fff; */
+/* --toastify-color-progress-dark: #b2b2b2; */
+/* --toastify-color-progress-info: var(--toastify-color-info); */
+/* --toastify-color-progress-success: var(--toastify-color-success); */
+/* --toastify-color-progress-warning: var(--toastify-color-warning); */
+/* --toastify-color-progress-error: var(--toastify-color-error); */
+/**/
+/* .Toastify__toast { */
+/*     padding: 8px 12px; */
+/*     border-radius: 8px; */
+/*     box-shadow: 2px 3px 7px 1px rgb(0 0 0 / 21%), */
+/*         -1px 8px 15px 5px rgb(0 0 0 / 10%); */
+/* } */
+/**/
+/* .Toastify__close-button { */
+/*     align-self: auto; */
+/*     display: flex; */
+/*     align-items: center; */
+/* } */
+/**/
+/* .Toastify__close-button--light { */
+/*     color: #fff; */
+/* } */

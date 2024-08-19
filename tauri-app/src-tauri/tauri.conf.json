@@ -16,11 +16,8 @@
         "all": false,
         "open": true
       },
-      "dialog": {
-          "all": true
-      },
-      "path": {
-          "all": true
+      "protocol": {
+          "asset": true
       }
     },
     "windows": [
