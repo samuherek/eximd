@@ -34,6 +34,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+tauri-app/binaries
 
 
 # tauri app src rs

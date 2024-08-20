@@ -7,7 +7,9 @@ import { listen } from "@tauri-apps/api/event";
 import { assign, createMachine, fromPromise } from "xstate";
 import { useMachine } from "@xstate/react";
 import { toast } from "react-toastify";
-import { convertFileSrc } from "@tauri-apps/api/tauri";
+import { Command } from "@tauri-apps/api/shell";
+
+
 
 const f = fromPromise(async ({ input }) => {
     return await invoke("drop_input", { payload: { items: input } });
@@ -43,7 +45,7 @@ const appMachine = createMachine({
                 },
                 onError: {
                     target: 'idle',
-                    actions: ({ event }) => {
+                    actions: ({ event }: any) => {
                         console.log("we are here, ", toast);
                         toast(event.error, {
                             type: "error"
@@ -58,7 +60,7 @@ const appMachine = createMachine({
 
 function App() {
     const [state, send] = useMachine(appMachine);
-    const [{ canDrop, isOver }, dropRef] = useDrop({
+    const [{ isOver }, dropRef] = useDrop({
         accept: NativeTypes.FILE,
         canDrop: () => true,
         collect: (monitor) => ({
@@ -70,7 +72,18 @@ function App() {
     console.log("machine state::: ", state);
 
     useEffect(() => {
+        async function run_me() {
+            const command = Command.sidecar("../binaries/exiftool");
+            const output = await command.execute();
+            console.log("output:: ", output);
+        }
+        run_me();
+
+
+
+
         const unlisten = listen('tauri://file-drop', async (event) => {
+
             send({ type: "DROP_INPUT", payload: event.payload });
         });
         return () => {

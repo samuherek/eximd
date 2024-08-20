@@ -7,14 +7,14 @@ import { ToastContainer } from "react-toastify";
 import 'react-toastify/dist/ReactToastify.css';
 import './main.css';
 
-const _contextClass = {
-    // success: "bg-blue-600",
-    // error: "bg-red-600",
-    // info: "bg-gray-600",
-    // warning: "bg-orange-400",
-    default: "bg-neutral-900 dark:bg-neutral-100",
-    // dark: "bg-white-600 font-gray-300",
-};
+// const _contextClass = {
+//     // success: "bg-blue-600",
+//     // error: "bg-red-600",
+//     // info: "bg-gray-600",
+//     // warning: "bg-orange-400",
+//     default: "bg-neutral-900 dark:bg-neutral-100",
+//     // dark: "bg-white-600 font-gray-300",
+// };
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>

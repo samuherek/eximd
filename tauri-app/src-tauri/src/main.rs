@@ -1,9 +1,35 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use eximd::exif::{obj_str_from_array_of_one, ExifMetadata};
 use eximd::file::{FileType, InputFile};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tauri::api::process::Command;
 use tauri::Manager;
+use tauri::{AppHandle, Runtime};
+
+pub fn get_exif_metadata(path: String) -> Option<ExifMetadata> {
+    let cmd = Command::new(path)
+        .args(["-j", "/Users/sam/Downloads/IMG_2483.jpg"])
+        .output()
+        .expect("to run exiftool command");
+
+    let data = cmd.stdout;
+    let value = match obj_str_from_array_of_one(&data) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            return None;
+        }
+    };
+    match serde_json::from_str::<ExifMetadata>(&value) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            None
+        }
+    }
+}
 
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 #[tauri::command]
@@ -109,7 +135,10 @@ struct DropView {
 }
 
 #[tauri::command]
-async fn drop_input(payload: DropInputPayload) -> Result<DropView, String> {
+async fn drop_input<R: Runtime>(
+    app_handle: AppHandle<R>,
+    payload: DropInputPayload,
+) -> Result<DropView, String> {
     if payload.items.len() != 1 {
         return Err("We accept only one input file now.".into());
     }
@@ -144,6 +173,19 @@ async fn drop_input(payload: DropInputPayload) -> Result<DropView, String> {
         files,
         file_count,
     };
+
+    let resource_path = app_handle
+        .path_resolver()
+        .resolve_resource("../binaries")
+        .expect("failed to resolve resource dir");
+
+    let _data = get_exif_metadata(
+        resource_path
+            .join("exiftool/exiftool")
+            .to_string_lossy()
+            .to_string(),
+    );
+    // println!("data: {:?}", data);
 
     Ok(res)
 }
