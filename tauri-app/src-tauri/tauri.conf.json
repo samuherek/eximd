@@ -6,7 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "ExiMd",
+   "productName": "ExiMd"
   },
   "tauri": {
     "allowlist": {
