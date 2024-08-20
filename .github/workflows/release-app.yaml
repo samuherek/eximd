@@ -51,12 +51,13 @@ jobs:
         # webkitgtk 4.0 is for Tauri v1 - webkitgtk 4.1 is for Tauri v2.
         # You can remove the one that doesn't apply to your app to speed up the workflow a bit.
         #
-      - name: Change dir to tauri-app 
-        run: cd tauri-app
 
       - name: install frontend dependencies
         run: pnpm install # change this to npm, pnpm or bun depending on which one you use.
         working-directory: tauri-app
+
+      - name: print dir
+        run: pwd
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -68,9 +69,8 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          tagName: app-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
+          tagName: eximd-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
           releaseName: "App v__VERSION__"
           releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
           args: ${{ matrix.args }}
+          projectPath: "tauri-app"
