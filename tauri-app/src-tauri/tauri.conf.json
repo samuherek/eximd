@@ -7,7 +7,7 @@
   },
   "package": {
     "productName": "ExiMd",
-    "version": "0.1.0"
+    "version": "__CARGO_PKG_VERSION__"
   },
   "tauri": {
     "allowlist": {

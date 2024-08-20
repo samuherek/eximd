@@ -23,7 +23,7 @@ jobs:
       run: rustup target add aarch64-apple-darwin
 
     - name: Build
-      run: cargo build --release --target aarch64-apple-darwin
+      run: cd tauri-app cargo build --release --target aarch64-apple-darwin
 
     - name: Extract version
       run: |
