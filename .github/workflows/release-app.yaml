@@ -28,16 +28,15 @@ jobs:
       - uses: actions/checkout@v4
 
       # node
-      - name: install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.x.x
-
       - name: setup node
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: pnpm
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.x.x
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
