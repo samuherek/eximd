@@ -15,9 +15,9 @@ jobs:
       matrix:
         include:
           - platform: "macos-latest" # for Arm based macs (M1 and above).
-            args: "--target aarch64-apple-darwin"
-          - platform: "macos-latest" # for Intel based macs.
-            args: "--target x86_64-apple-darwin"
+            args: "--verbose --target aarch64-apple-darwin"
+          # - platform: "macos-latest" # for Intel based macs.
+          #   args: "--verbose --target x86_64-apple-darwin"
           # - platform: "ubuntu-22.04" # for Tauri v1 you could replace this with ubuntu-20.04.
           #   args: ""
           # - platform: "windows-latest"
@@ -27,15 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # node
+      - name: install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.x.x
+
       - name: setup node
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8.6
+          cache: pnpm
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -47,7 +49,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04' # This must match the platform value defined above.
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
         # webkitgtk 4.0 is for Tauri v1 - webkitgtk 4.1 is for Tauri v2.
         # You can remove the one that doesn't apply to your app to speed up the workflow a bit.
         #
@@ -57,7 +59,9 @@ jobs:
         working-directory: tauri-app
 
       - name: print dir
-        run: pwd
+        run: |
+          pwd
+          ls -la
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -69,8 +73,8 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
+          projectPath: "tauri-app"
           tagName: eximd-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
           releaseName: "App v__VERSION__"
           releaseBody: "See the assets to download this version and install."
           args: ${{ matrix.args }}
-          projectPath: "tauri-app"
