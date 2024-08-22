@@ -209,11 +209,31 @@ async fn drop_input(
 #[tauri::command]
 fn collect_rename_files(
     state: tauri::State<'_, AppState>,
-    window: Window,
-    payload: DropInputPayload,
-) -> Result<String, String> {
-    println!("we have the sate {:?}", state);
-    Ok("we are done".into())
+) -> Result<DropView, String> {
+    let input_path = state.source.lock().unwrap();
+    let files = eximd::file::collect_files(&input_path);
+    let mut file_map: HashMap<String, FileGroupState> = HashMap::new();
+
+    for file in files {
+        let entry = file_map
+            .entry(file.hash_key())
+            .or_insert(FileGroupState::default());
+
+        match file.file_type {
+            FileType::IMG => entry.image = Some(file),
+            FileType::VIDEO => entry.video = Some(file),
+            _ => entry.configs.push(file),
+        }
+    }
+
+    let files = file_map
+        .into_iter()
+        .flat_map(|(_, group)| FileView::try_new(group, input_path.as_path()))
+        .collect::<Vec<_>>();
+    let file_count = files.len();
+
+    let res = DropView { files, file_count };
+    Ok(res)
 }
 
 fn main() {
