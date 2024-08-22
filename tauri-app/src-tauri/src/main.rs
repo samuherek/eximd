@@ -2,11 +2,29 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use eximd::exif::{obj_str_from_array_of_one, ExifMetadata};
 use eximd::file::{FileType, InputFile};
+use eximd::utils;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use tauri::api::process::Command;
-use tauri::Manager;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime, Window};
+
+// 1. load the source -> stick the dir in the state
+// 2. collect files -> collect and group files into file groups -> emit a new file
+
+#[derive(Default, Debug)]
+struct FileGroupState {
+    image: Option<InputFile>,
+    configs: Vec<InputFile>,
+    video: Option<InputFile>,
+}
+
+#[derive(Default, Debug)]
+struct AppState {
+    source: Mutex<PathBuf>,
+    file_group: Arc<Mutex<HashMap<String, FileGroupState>>>,
+}
 
 pub fn get_exif_metadata(path: String) -> Option<ExifMetadata> {
     let cmd = Command::new(path)
@@ -31,26 +49,15 @@ pub fn get_exif_metadata(path: String) -> Option<ExifMetadata> {
     }
 }
 
-// Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct DropInputPayload {
-    items: Vec<String>,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct FileConfig {
+#[derive(Debug, serde::Serialize, Clone)]
+struct FileRelated {
     path: PathBuf,
     relative_path: String,
     name: String,
     ext: String,
 }
 
-impl FileConfig {
+impl FileRelated {
     fn new(input: InputFile, input_path: &Path) -> Self {
         let relative_path = input
             .src
@@ -66,15 +73,15 @@ impl FileConfig {
     }
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, Clone)]
 struct FileView {
     path: PathBuf,
     relative_path: String,
     name: String,
     ext: String,
     file_type: FileType,
-    file_configs: Vec<FileConfig>,
-    file_live_photo: Option<FileConfig>,
+    file_configs: Vec<FileRelated>,
+    file_live_photo: Option<FileRelated>,
 }
 
 impl FileView {
@@ -95,12 +102,12 @@ impl FileView {
         }
     }
 
-    fn try_new(group: FileGroup, input_path: &Path) -> Result<Self, String> {
+    fn try_new(group: FileGroupState, input_path: &Path) -> Result<Self, String> {
         let mut main_file = group.image.map(|x| FileView::new(x, input_path));
         if let Some(video) = group.video {
             match main_file {
                 Some(ref mut file) => {
-                    file.file_live_photo = Some(FileConfig::new(video, input_path));
+                    file.file_live_photo = Some(FileRelated::new(video, input_path));
                 }
                 None => {
                     main_file = Some(FileView::new(video, input_path));
@@ -112,7 +119,7 @@ impl FileView {
             for config in group.configs {
                 main_file
                     .file_configs
-                    .push(FileConfig::new(config, input_path));
+                    .push(FileRelated::new(config, input_path));
             }
         }
 
@@ -120,78 +127,98 @@ impl FileView {
     }
 }
 
-#[derive(Default)]
-struct FileGroup {
-    image: Option<InputFile>,
-    configs: Vec<InputFile>,
-    video: Option<InputFile>,
-}
-
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 struct DropView {
-    directory: PathBuf,
     files: Vec<FileView>,
     file_count: usize,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct DropInputPayload {
+    items: Vec<String>,
+}
+
+fn collect_files(input_path: PathBuf, window: Window) {
+    thread::spawn(move || {
+        let files = eximd::file::collect_files(&input_path);
+        let mut file_map: HashMap<String, FileGroupState> = HashMap::new();
+
+        for file in files {
+            let entry = file_map
+                .entry(file.hash_key())
+                .or_insert(FileGroupState::default());
+
+            match file.file_type {
+                FileType::IMG => entry.image = Some(file),
+                FileType::VIDEO => entry.video = Some(file),
+                _ => entry.configs.push(file),
+            }
+        }
+
+        let files = file_map
+            .into_iter()
+            .flat_map(|(_, group)| FileView::try_new(group, input_path.as_path()))
+            .collect::<Vec<_>>();
+        let file_count = files.len();
+
+        let res = DropView { files, file_count };
+        let _ = window.emit("FILES_COLLECTED", res).map_err(|err| {
+            eprintln!("file collection error: {}", err);
+        });
+    });
+}
+
 #[tauri::command]
-async fn drop_input<R: Runtime>(
-    app_handle: AppHandle<R>,
+async fn drop_input(
+    state: tauri::State<'_, AppState>,
     payload: DropInputPayload,
-) -> Result<DropView, String> {
+) -> Result<PathBuf, String> {
     if payload.items.len() != 1 {
-        return Err("We accept only one input file now.".into());
+        return Err("You need to provide one path.".into());
     }
+
     let input_path = payload
         .items
         .get(0)
-        .map(|x| std::path::Path::new(x))
-        .expect("Should have a path");
-    let files = eximd::file::collect_files(&input_path);
-    let file_count = files.len();
-    let mut file_map: HashMap<String, FileGroup> = HashMap::new();
+        .map(std::path::Path::new)
+        .ok_or_else(|| "Invalid path to the resources")?;
 
-    for file in files {
-        let entry = file_map
-            .entry(file.hash_key())
-            .or_insert(FileGroup::default());
+    let mut source = state.source.lock().unwrap();
+    *source = input_path.to_path_buf().into();
 
-        match file.file_type {
-            FileType::IMG => entry.image = Some(file),
-            FileType::VIDEO => entry.video = Some(file),
-            _ => entry.configs.push(file),
-        }
-    }
+    // let window_clone = window.clone();
+    // let input_path_clone = input_path.to_path_buf();
+    // collect_files(input_path_clone, window_clone);
 
-    let files = file_map
-        .into_iter()
-        .flat_map(|(_, group)| FileView::try_new(group, input_path))
-        .collect::<Vec<_>>();
-
-    let res = DropView {
-        directory: input_path.to_path_buf(),
-        files,
-        file_count,
-    };
-
-    let resource_path = app_handle
-        .path_resolver()
-        .resolve_resource("../binaries")
-        .expect("failed to resolve resource dir");
-
-    let _data = get_exif_metadata(
-        resource_path
-            .join("exiftool/exiftool")
-            .to_string_lossy()
-            .to_string(),
-    );
+    // let resource_path = app_handle
+    //     .path_resolver()
+    //     .resolve_resource("../binaries")
+    //     .expect("failed to resolve resource dir");
+    //
+    // let _data = get_exif_metadata(
+    //     resource_path
+    //         .join("exiftool/exiftool")
+    //         .to_string_lossy()
+    //         .to_string(),
+    // );
     // println!("data: {:?}", data);
 
-    Ok(res)
+    Ok(input_path.to_path_buf())
+}
+
+#[tauri::command]
+fn collect_rename_files(
+    state: tauri::State<'_, AppState>,
+    window: Window,
+    payload: DropInputPayload,
+) -> Result<String, String> {
+    println!("we have the sate {:?}", state);
+    Ok("we are done".into())
 }
 
 fn main() {
     tauri::Builder::default()
+        .manage(AppState::default())
         .setup(|app| {
             #[cfg(debug_assertions)]
             {
@@ -200,7 +227,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, drop_input])
+        .invoke_handler(tauri::generate_handler![drop_input, collect_rename_files])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

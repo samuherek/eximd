@@ -13,6 +13,7 @@
     "@tauri-apps/api": "^1",
     "@tauri-apps/plugin-dialog": "2.0.0-rc.0",
     "@xstate/react": "^4.1.1",
+    "clsx": "^2.1.1",
     "react": "^18.2.0",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",

@@ -21,6 +21,7 @@ pub enum FileType {
     OTHER,
 }
 
+#[derive(Debug)]
 pub struct InputFile {
     pub src: PathBuf,
     pub stem: String,
