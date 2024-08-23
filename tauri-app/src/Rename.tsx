@@ -1,23 +1,21 @@
-import { listen } from "@tauri-apps/api/event";
-import { ActorRefFrom, assign, fromCallback, fromPromise, setup } from "xstate";
+import { ActorRefFrom, assign, fromPromise, setup } from "xstate";
 import { useSelector } from "@xstate/react";
 import { raiseErrorToUI } from './utils';
-import clsx from 'clsx';
 import { invoke } from "@tauri-apps/api";
 
 type Props = {
     actorRef: ActorRefFrom<typeof renameMachine>
 }
 
-const tauriActor = fromCallback(({ sendBack }) => {
-    // const unCollected = listen('FILES_COLLECTED', async (event) => {
-    //     console.log("tauri actor cllect filesl", event);
-    //     sendBack({ type: "FILES_COLLECTED", payload: event.payload });
-    // });
-    return () => {
-        // unCollected.then((fn) => fn());
-    }
-});
+// const tauriActor = fromCallback(({ sendBack }) => {
+//     // const unCollected = listen('FILES_COLLECTED', async (event) => {
+//     //     console.log("tauri actor cllect filesl", event);
+//     //     sendBack({ type: "FILES_COLLECTED", payload: event.payload });
+//     // });
+//     return () => {
+//         // unCollected.then((fn) => fn());
+//     }
+// });
 
 const tauriCollectCommand = fromPromise(async () => {
     const res = await invoke<{ files: any[], file_count: number }>("collect_rename_files");
@@ -40,6 +38,12 @@ const itemMachine = setup({
             selected: boolean
         },
         events: { type: "TOGGLE_ITEM" }
+        | { type: "DESELECT_ITEM" }
+        | { type: "SELECT_ITEM" }
+    },
+    guards: {
+        isSelected: ({ context }) => context.selected === true,
+        isDeselected: ({ context }) => context.selected === false,
     }
 }).createMachine({
     context: ({ input }: { input: any }) => ({
@@ -50,12 +54,24 @@ const itemMachine = setup({
         file_type: input.file_type,
         file_configs: input.file_configs,
         file_live_photo: input.file_live_photo,
-        selected: false
+        selected: true
     }),
     on: {
         TOGGLE_ITEM: {
             actions: assign({
-                selected: ({context}) => !context.selected
+                selected: ({ context }) => !context.selected
+            })
+        },
+        DESELECT_ITEM: {
+            guard: 'isSelected',
+            actions: assign({
+                selected: () => false
+            })
+        },
+        SELECT_ITEM: {
+            guard: 'isDeselected',
+            actions: assign({
+                selected: () => true
             })
         }
     }
@@ -67,7 +83,10 @@ const renameMachine = setup({
             items: ActorRefFrom<typeof itemMachine>[],
             source: string,
             file_count: number | null,
-        }
+            selected_all: boolean
+        },
+        events: { type: "TOGGLE_SELECTION_ALL" }
+        | { type: "EXIF_ITEM_COLLECTED" }
     },
     actors: {
         tauriCollectCommand
@@ -75,10 +94,11 @@ const renameMachine = setup({
 }).createMachine(
     {
         initial: 'collecting',
-        context: ({ input }) => ({
+        context: ({ input }: any) => ({
             items: [],
             source: input.source,
             file_count: null,
+            selected_all: true,
         }),
         states: {
             collecting: {
@@ -87,13 +107,12 @@ const renameMachine = setup({
                     onDone: {
                         target: 'exifing',
                         actions: assign({
-                            items: ({ event, spawn }) => {
-                                return event.output.items.map((item) => spawn(itemMachine, {
+                            items: ({ event, spawn }) => event.output.items.map(
+                                (item) => spawn(itemMachine, {
                                     id: item.path,
                                     input: item
                                 })
-                                )
-                            },
+                            ),
                             file_count: ({ event }) => event.output.file_count,
                         })
                     },
@@ -101,6 +120,10 @@ const renameMachine = setup({
                         actions: raiseErrorToUI
                     }
                 },
+
+                on: {
+                    TOGGLE_SELECTION_ALL: {}
+                }
             },
             exifing: {
                 initial: "loading",
@@ -114,8 +137,35 @@ const renameMachine = setup({
                     done: {}
                 },
             },
+            ready: {
+            },
             committing: {
-
+                on: {
+                    TOGGLE_SELECTION_ALL: {}
+                }
+            }
+        },
+        on: {
+            TOGGLE_SELECTION_ALL: {
+                actions: [
+                    assign({
+                        selected_all: ({ context }) => {
+                            const isEverySelected = context.items.every(x => x.getSnapshot().context.selected);
+                            return isEverySelected ? false : true
+                        }
+                    }),
+                    ({ context }) => {
+                        const isEverySelected = context.items.every(x => x.getSnapshot().context.selected);
+                        if (isEverySelected) {
+                            context.items.forEach(x => {
+                                x.send({ type: "DESELECT_ITEM" });
+                            })
+                        } else {
+                            context.items.forEach(x => {
+                                x.send({ type: "SELECT_ITEM" });
+                            })
+                        }
+                    }]
             }
         }
     }
@@ -152,13 +202,14 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof itemMachine> }) {
                 {item.file_live_photo ? (
                     <span className="flex text-neutral-500">< svg style={{ fill: "currentColor" }} className="w-4 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><path d="M0 128C0 92.7 28.7 64 64 64l256 0c35.3 0 64 28.7 64 64l0 256c0 35.3-28.7 64-64 64L64 448c-35.3 0-64-28.7-64-64L0 128zM559.1 99.8c10.4 5.6 16.9 16.4 16.9 28.2l0 256c0 11.8-6.5 22.6-16.9 28.2s-23 5-32.9-1.6l-96-64L416 337.1l0-17.1 0-128 0-17.1 14.2-9.5 96-64c9.8-6.5 22.4-7.2 32.9-1.6z" /></svg></span>
                 ) : null}
-                <div className="text-neutral-500">
-                    <svg style={{ fill: "currentColor" }} className="w-4 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M256 32a224 224 0 1 1 0 448 224 224 0 1 1 0-448zm0 480A256 256 0 1 0 256 0a256 256 0 1 0 0 512z" /></svg>
-                </div>
             </div>
         </li>
     )
 }
+
+// <div className="text-neutral-500">
+//     <svg style={{ fill: "currentColor" }} className="w-4 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M256 32a224 224 0 1 1 0 448 224 224 0 1 1 0-448zm0 480A256 256 0 1 0 256 0a256 256 0 1 0 0 512z" /></svg>
+// </div>
 
 function Rename({ actorRef }: Props) {
     const source = useSelector(actorRef, (state) => {
@@ -167,25 +218,71 @@ function Rename({ actorRef }: Props) {
     });
     const file_count = useSelector(actorRef, (state) => state.context.file_count);
     const items = useSelector(actorRef, (state) => state.context.items);
+    const isCollecting = useSelector(actorRef, state => state.matches("collecting"));
+    const isExifing = useSelector(actorRef, state => state.matches("exifing"));
+    const isReady = useSelector(actorRef, state => state.matches("ready"));
+    const isSelectedAll = useSelector(actorRef, state => state.context.selected_all);
+
 
 
     return (
         <div className="">
             <div className="flex items-center justify-center mb-12">
-                <button type="button" className="text-white bg-amber-700 hover:bg-amber-800 focus:ring-4 focus:outline-none focus:ring-amger-300 font-medium rounded-lg text-sm py-1.5 px-3 text-center inline-flex items-center dark:bg-amber-600 dark:hover:bg-amber-700 dark:focus:ring-amber-800">
-                    Rename
-                </button>
+                <p>
+                    This will rename the following files to the format `YY-MM-DD_HH-MM-SS.ext`.
+                </p>
             </div>
-            <div className="flex items-center justify-between mb-8 rounded py-2 px-4 bg-neutral-200 dark:bg-neutral-800">
-                <span className="mr-4"><strong className="mr-2">Source:</strong> {source}</span>
-                <div className="flex items-center">
-                    {file_count ? (
-                        <span className="text-neutral-500 mr-4">({file_count} files)</span>
+            <div className="mb-8 rounded py-2 px-4 bg-neutral-200 dark:bg-neutral-800">
+                <div className="flex items-center justify-between border-b border-neutral-700 pt-2 pb-3 mb-3">
+                    <div className="flex items-center">
+                        <span className="mr-4"><strong className="mr-2">Source:</strong> {source}</span>
+                    </div>
+                    <div className="flex items-center">
+                        {file_count ? (
+                            <span className="text-neutral-500">found {file_count} files</span>
+                        ) : null}
+                    </div>
+                </div>
+                <div className="pb-2">
+                    {isCollecting ? (
+                        <div className="flex items-center">
+                            <span>Collecting files from the file system</span>
+                            <svg className="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" stroke="currentColor" strokeWidth="4" cx="12" cy="12" r="10"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                        </div>
+                    ) : isExifing ? (
+                        <div className="flex items-center justify-between">
+                            <button
+                                className="flex items-center border-0 shadow-none active:bg-transparent hover:text-neutral-800 hover:dark:text-neutral-200"
+                                onClick={() => actorRef.send({ type: "TOGGLE_SELECTION_ALL" })}
+                            >
+                                {isSelectedAll ? (
+                                    <>
+                                        <svg className="w-4 h-4 mr-4 text-amber-500" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M64 32C28.7 32 0 60.7 0 96L0 416c0 35.3 28.7 64 64 64l320 0c35.3 0 64-28.7 64-64l0-320c0-35.3-28.7-64-64-64L64 32zM337 209L209 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L303 175c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9z" /></svg>
+                                        Deselect all
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg className="w-4 h-4 mr-4 text-neutral-500" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M384 64c17.7 0 32 14.3 32 32l0 320c0 17.7-14.3 32-32 32L64 448c-17.7 0-32-14.3-32-32L32 96c0-17.7 14.3-32 32-32l320 0zM64 32C28.7 32 0 60.7 0 96L0 416c0 35.3 28.7 64 64 64l320 0c35.3 0 64-28.7 64-64l0-320c0-35.3-28.7-64-64-64L64 32z" /></svg>
+                                        Select all
+                                    </>
+                                )}
+                            </button>
+                            <div className="flex items-center">
+                                <svg className="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" stroke="currentColor" strokeWidth="4" cx="12" cy="12" r="10"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span className="mr-2">Collecting metadata</span>
+                            </div>
+                        </div>
+                    ) : isReady ? (
+                        <button type="button" className="text-white bg-amber-700 hover:bg-amber-800 focus:ring-4 focus:outline-none focus:ring-amger-300 font-medium rounded-lg text-sm py-1.5 px-3 text-center inline-flex items-center dark:bg-amber-600 dark:hover:bg-amber-700 dark:focus:ring-amber-800">
+                            Rename xxx files
+                        </button>
                     ) : null}
-                    <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" stroke="currentColor" strokeWidth="4" cx="12" cy="12" r="10"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
                 </div>
             </div>
             <ul>

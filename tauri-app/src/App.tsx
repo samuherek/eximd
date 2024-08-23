@@ -102,10 +102,10 @@ function App() {
                 </div>
             </div>
             {state.matches("intro") ? (
-                <Intro actorRef={state.children.introMachine} />
+                <Intro actorRef={state.children.introMachine as any} />
             ) : state.matches("rename") ? (
-                <Rename actorRef={state.children.renameMachine} />
-            ) : undefined }
+                <Rename actorRef={state.children.renameMachine as any} />
+            ) : undefined}
         </div >
     );
 }

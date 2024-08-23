@@ -1,7 +1,7 @@
 import { useSelector } from '@xstate/react';
 import { useDrop } from 'react-dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
-import { ActorRefFrom, assign, fromCallback, fromPromise, raise, sendParent, sendTo, setup } from 'xstate';
+import { ActorRefFrom, assign, fromCallback, fromPromise, raise, sendParent, setup } from 'xstate';
 import clsx from 'clsx';
 import { listen } from '@tauri-apps/api/event';
 import { raiseErrorToUI } from './utils';
@@ -88,10 +88,10 @@ const introMachine = setup({
                 loading: {
                     invoke: {
                         src: 'tauriDropInputCommand',
-                        input: ({ event }) => event.payload,
+                        input: ({ event }: any) => event.payload,
                         onDone: {
                             actions: [assign({
-                                source: ({ event }) => event.output,
+                                source: ({ event }) => event.output as any,
                             }),
                             raise({ type: "NAVIGATE" })
                             ]
