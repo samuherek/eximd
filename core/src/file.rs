@@ -1,16 +1,82 @@
 use super::utils;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
-struct FilePath(PathBuf);
+#[derive(Debug, Clone)]
+pub struct FilePath(PathBuf);
 
 impl FilePath {
-    fn new(path: &Path) -> Self {
+    pub fn new(path: &Path) -> Self {
         Self(path.to_path_buf())
     }
 
-    fn value(&self) -> &PathBuf {
+    pub fn value(&self) -> &PathBuf {
         &self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.value().to_str().unwrap_or_default()
+    }
+
+    pub fn with_file_name<S: AsRef<OsStr>>(&self, file_name: S) -> PathBuf {
+        self.value().to_owned().with_file_name(file_name)
+    }
+}
+
+impl ToString for FilePath {
+    fn to_string(&self) -> String {
+        self.value().to_string_lossy().into()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FileStem(String);
+
+impl FileStem {
+    // TODO: maybe it needs to reutrn an option or an error in case
+    // we can not convert it to string?
+    pub fn new(path: &Path) -> Self {
+        let stem = path
+            .file_stem()
+            .expect("To have a file stem")
+            .to_string_lossy()
+            .into();
+        Self(stem)
+    }
+
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl ToString for FileStem {
+    fn to_string(&self) -> String {
+        self.value().to_owned().into()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FileExt(String);
+
+impl FileExt {
+    // TODO: maybe it needs to reutrn an option or an error in case
+    // we can not convert it to string?
+    pub fn new(path: &Path) -> Self {
+        let ext = path
+            .extension()
+            .map(|i| i.to_string_lossy().into())
+            .unwrap_or_default();
+        Self(ext)
+    }
+
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl ToString for FileExt {
+    fn to_string(&self) -> String {
+        self.value().to_owned().into()
     }
 }
 
@@ -21,22 +87,41 @@ pub enum FileType {
     OTHER,
 }
 
-#[derive(Debug)]
+impl From<&FileExt> for FileType {
+    fn from(ext: &FileExt) -> Self {
+        if utils::is_img(ext.value()) {
+            FileType::IMG
+        } else if utils::is_video(ext.value()) {
+            FileType::VIDEO
+        } else {
+            FileType::OTHER
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct InputFile {
-    pub src: PathBuf,
-    pub stem: String,
-    pub ext: String,
+    pub src: FilePath,
+    pub src_relative: FilePath,
+    pub stem: FileStem,
+    pub ext: FileExt,
     pub file_type: FileType,
 }
 
 impl InputFile {
-    fn new(file: &FilePath) -> Self {
-        let src = file.value().to_owned();
-        let stem = get_stem(&src);
-        let ext = get_ext(&src);
-        let file_type = file_type_from_str(&ext);
+    pub fn new(absolute_path: &FilePath, relative_point: &Path) -> Self {
+        let src = absolute_path.clone();
+        let relative_path = absolute_path.value().to_owned();
+        let relative_path = relative_path
+            .strip_prefix(relative_point)
+            .expect("to strip the drop path prefix from foun file");
+        let src_relative = FilePath::new(relative_path);
+        let stem = FileStem::new(absolute_path.value());
+        let ext = FileExt::new(absolute_path.value());
+        let file_type = FileType::from(&ext);
         Self {
             src,
+            src_relative,
             stem,
             ext,
             file_type,
@@ -44,68 +129,6 @@ impl InputFile {
     }
 
     pub fn hash_key(&self) -> String {
-        self.stem.clone()
+        self.stem.to_string()
     }
-
-    pub fn path(&self) -> &PathBuf {
-        &self.src
-    }
-}
-
-fn get_stem(path: &Path) -> String {
-    path.file_stem()
-        .expect("To have a file stem")
-        .to_string_lossy()
-        .into()
-}
-
-fn get_ext(path: &Path) -> String {
-    path.extension()
-        .map(|i| i.to_string_lossy().into())
-        .unwrap_or_default()
-}
-
-fn file_type_from_str(ext: &str) -> FileType {
-    if utils::is_img(ext) {
-        FileType::IMG
-    } else if utils::is_video(ext) {
-        FileType::VIDEO
-    } else {
-        FileType::OTHER
-    }
-}
-
-// Accept either a directory or a file path.
-// If it is a file, it will return a vector of just one file.
-// If it is a directory, it will walk the files and return
-// all the files recursivelly.
-pub fn collect_files(path: &Path) -> Vec<InputFile> {
-    let mut files = vec![];
-    // We support direct path
-    if path.is_file() {
-        let file = FilePath::new(path);
-        files.push(InputFile::new(&file));
-    // We support a directory and we walk all the paths.
-    } else if path.is_dir() {
-        for entry in WalkDir::new(path) {
-            let entry = entry.map_or(None, |x| {
-                let x_path = x.path();
-                if x_path.is_file() {
-                    Some(FilePath::new(x_path))
-                } else {
-                    None
-                }
-            });
-            if let Some(entry) = entry {
-                files.push(InputFile::new(&entry));
-            }
-        }
-    } else {
-        eprintln!(
-            "Error: path is neither a file niether a dir: {}",
-            path.display().to_string()
-        );
-    }
-
-    files
 }

@@ -1,21 +1,12 @@
-import { ActorRefFrom, assign, fromPromise, setup } from "xstate";
+import { ActorRefFrom, assign, fromCallback, fromPromise, setup } from "xstate";
 import { useSelector } from "@xstate/react";
 import { raiseErrorToUI } from './utils';
 import { invoke } from "@tauri-apps/api";
+import { listen } from "@tauri-apps/api/event";
 
 type Props = {
     actorRef: ActorRefFrom<typeof renameMachine>
 }
-
-// const tauriActor = fromCallback(({ sendBack }) => {
-//     // const unCollected = listen('FILES_COLLECTED', async (event) => {
-//     //     console.log("tauri actor cllect filesl", event);
-//     //     sendBack({ type: "FILES_COLLECTED", payload: event.payload });
-//     // });
-//     return () => {
-//         // unCollected.then((fn) => fn());
-//     }
-// });
 
 const tauriCollectCommand = fromPromise(async () => {
     const res = await invoke<{ files: any[], file_count: number }>("collect_rename_files");
@@ -24,6 +15,22 @@ const tauriCollectCommand = fromPromise(async () => {
         file_count: res.file_count
     }
 });
+
+const tauriExifCollectCommand = fromPromise(async () => {
+    const res = await invoke("start_exif_collection");
+    console.log("here we are", res);
+    return res;
+});
+
+const tauriExifDataListener = fromCallback(() => {
+    const unlisten = listen("EXIF_FILE_DATA", (data) => {
+        console.log("data", data);
+    })
+    return () => {
+        unlisten.then(fn => fn())
+    }
+});
+
 
 const itemMachine = setup({
     types: {} as {
@@ -89,7 +96,9 @@ const renameMachine = setup({
         | { type: "EXIF_ITEM_COLLECTED" }
     },
     actors: {
-        tauriCollectCommand
+        tauriCollectCommand,
+        tauriExifCollectCommand,
+        tauriExifDataListener
     }
 }).createMachine(
     {
@@ -120,14 +129,25 @@ const renameMachine = setup({
                         actions: raiseErrorToUI
                     }
                 },
-
                 on: {
                     TOGGLE_SELECTION_ALL: {}
                 }
             },
             exifing: {
-                initial: "loading",
+                initial: "start",
+                invoke: {
+                    src: tauriExifDataListener,
+                },
                 states: {
+                    start: {
+                        invoke: {
+                            src: tauriExifCollectCommand,
+                        },
+                        onDone: {
+                            target: "loading",
+                        },
+                        onError: raiseErrorToUI
+                    },
                     loading: {
                         on: {
                             EXIF_ITEM_COLLECTED: {
@@ -173,7 +193,7 @@ const renameMachine = setup({
 
 function Item({ actorRef }: { actorRef: ActorRefFrom<typeof itemMachine> }) {
     const item = useSelector(actorRef, state => {
-        console.log("item state", state);
+        // console.log("item state", state);
         return state.context
     });
 
@@ -206,10 +226,6 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof itemMachine> }) {
         </li>
     )
 }
-
-// <div className="text-neutral-500">
-//     <svg style={{ fill: "currentColor" }} className="w-4 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M256 32a224 224 0 1 1 0 448 224 224 0 1 1 0-448zm0 480A256 256 0 1 0 256 0a256 256 0 1 0 0 512z" /></svg>
-// </div>
 
 function Rename({ actorRef }: Props) {
     const source = useSelector(actorRef, (state) => {

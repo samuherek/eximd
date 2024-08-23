@@ -1,19 +1,18 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use eximd::exif::{obj_str_from_array_of_one, ExifMetadata};
+use eximd::exif::{get_exif_file_from_input, ExifFile};
 use eximd::file::{FileType, InputFile};
-use eximd::utils;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tauri::api::process::Command;
-use tauri::{AppHandle, Manager, Runtime, Window};
+use tauri::{AppHandle, Manager, Window};
 
 // 1. load the source -> stick the dir in the state
 // 2. collect files -> collect and group files into file groups -> emit a new file
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 struct FileGroupState {
     image: Option<InputFile>,
     configs: Vec<InputFile>,
@@ -23,61 +22,33 @@ struct FileGroupState {
 #[derive(Default, Debug)]
 struct AppState {
     source: Mutex<PathBuf>,
-    file_group: Arc<Mutex<HashMap<String, FileGroupState>>>,
-}
-
-pub fn get_exif_metadata(path: String) -> Option<ExifMetadata> {
-    let cmd = Command::new(path)
-        .args(["-j", "/Users/sam/Downloads/IMG_2483.jpg"])
-        .output()
-        .expect("to run exiftool command");
-
-    let data = cmd.stdout;
-    let value = match obj_str_from_array_of_one(&data) {
-        Ok(value) => value,
-        Err(err) => {
-            eprintln!("Error: {}", err);
-            return None;
-        }
-    };
-    match serde_json::from_str::<ExifMetadata>(&value) {
-        Ok(value) => Some(value),
-        Err(err) => {
-            eprintln!("Error: {}", err);
-            None
-        }
-    }
+    file_group: Arc<Mutex<Vec<FileGroupState>>>,
 }
 
 #[derive(Debug, serde::Serialize, Clone)]
 struct FileRelated {
-    path: PathBuf,
-    relative_path: String,
-    name: String,
+    src: String,
+    src_relative: String,
+    stem: String,
     ext: String,
 }
 
 impl FileRelated {
-    fn new(input: InputFile, input_path: &Path) -> Self {
-        let relative_path = input
-            .src
-            .strip_prefix(input_path)
-            .map(|x| format!("./{}", eximd::utils::path_to_string(x)))
-            .expect("To have correct relative path");
+    fn new(input: &ExifFile) -> Self {
         Self {
-            path: input.src,
-            relative_path,
-            name: input.stem,
-            ext: input.ext,
+            src: input.src.to_string(),
+            src_relative: input.src.to_string(),
+            stem: input.stem.to_string(),
+            ext: input.ext.to_string(),
         }
     }
 }
 
 #[derive(Debug, serde::Serialize, Clone)]
 struct FileView {
-    path: PathBuf,
-    relative_path: String,
-    name: String,
+    src: String,
+    src_relative: String,
+    stem: String,
     ext: String,
     file_type: FileType,
     file_configs: Vec<FileRelated>,
@@ -85,32 +56,27 @@ struct FileView {
 }
 
 impl FileView {
-    fn new(input: InputFile, input_path: &Path) -> Self {
-        let relative_path = input
-            .src
-            .strip_prefix(input_path)
-            .map(|x| format!("./{}", eximd::utils::path_to_string(x)))
-            .expect("To have correct relative path");
+    fn new(input: &ExifFile) -> Self {
         Self {
-            path: input.src,
-            relative_path,
-            name: input.stem,
-            ext: input.ext,
-            file_type: input.file_type,
+            src: input.src.to_string(),
+            src_relative: input.src_relative.to_string(),
+            stem: input.stem.to_string(),
+            ext: input.ext.to_string(),
+            file_type: input.file_type.clone(),
             file_configs: vec![],
             file_live_photo: None,
         }
     }
 
-    fn try_new(group: FileGroupState, input_path: &Path) -> Result<Self, String> {
-        let mut main_file = group.image.map(|x| FileView::new(x, input_path));
+    fn try_new(group: FileGroupState) -> Result<Self, String> {
+        let mut main_file = group.image.map(|x| FileView::new(&ExifFile::from(x)));
         if let Some(video) = group.video {
             match main_file {
                 Some(ref mut file) => {
-                    file.file_live_photo = Some(FileRelated::new(video, input_path));
+                    file.file_live_photo = Some(FileRelated::new(&ExifFile::from(video)));
                 }
                 None => {
-                    main_file = Some(FileView::new(video, input_path));
+                    main_file = Some(FileView::new(&ExifFile::from(video)));
                 }
             }
         }
@@ -119,7 +85,7 @@ impl FileView {
             for config in group.configs {
                 main_file
                     .file_configs
-                    .push(FileRelated::new(config, input_path));
+                    .push(FileRelated::new(&ExifFile::from(config)));
             }
         }
 
@@ -138,34 +104,40 @@ struct DropInputPayload {
     items: Vec<String>,
 }
 
-fn collect_files(input_path: PathBuf, window: Window) {
+#[derive(Debug, serde::Deserialize)]
+struct ExifFileData {
+    src: String,
+}
+
+#[tauri::command]
+fn start_exif_collection(
+    app_handle: AppHandle,
+    state: tauri::State<'_, AppState>,
+    window: Window,
+) -> Result<(), String> {
+    let file_group = state.file_group.lock().unwrap().clone();
+    let resource_path = app_handle
+        .path_resolver()
+        .resolve_resource("../binaries")
+        .ok_or_else(|| "Failed to resolve resource dir for exiftool")?;
+
     thread::spawn(move || {
-        let files = eximd::file::collect_files(&input_path);
-        let mut file_map: HashMap<String, FileGroupState> = HashMap::new();
-
-        for file in files {
-            let entry = file_map
-                .entry(file.hash_key())
-                .or_insert(FileGroupState::default());
-
-            match file.file_type {
-                FileType::IMG => entry.image = Some(file),
-                FileType::VIDEO => entry.video = Some(file),
-                _ => entry.configs.push(file),
+        let cmd_path = resource_path
+            .join("exiftool/exiftool")
+            .to_string_lossy()
+            .to_string();
+        for (i, file_group) in file_group.iter().enumerate() {
+            if let Some(image) = &file_group.image {
+                let data = get_exif_file_from_input(&cmd_path, image);
+                println!("processsed {:?}", data);
+                window
+                    .emit("EXIF_FILE_DATA", "")
+                    .expect("to emit event to the FE");
             }
         }
-
-        let files = file_map
-            .into_iter()
-            .flat_map(|(_, group)| FileView::try_new(group, input_path.as_path()))
-            .collect::<Vec<_>>();
-        let file_count = files.len();
-
-        let res = DropView { files, file_count };
-        let _ = window.emit("FILES_COLLECTED", res).map_err(|err| {
-            eprintln!("file collection error: {}", err);
-        });
     });
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -186,32 +158,13 @@ async fn drop_input(
     let mut source = state.source.lock().unwrap();
     *source = input_path.to_path_buf().into();
 
-    // let window_clone = window.clone();
-    // let input_path_clone = input_path.to_path_buf();
-    // collect_files(input_path_clone, window_clone);
-
-    // let resource_path = app_handle
-    //     .path_resolver()
-    //     .resolve_resource("../binaries")
-    //     .expect("failed to resolve resource dir");
-    //
-    // let _data = get_exif_metadata(
-    //     resource_path
-    //         .join("exiftool/exiftool")
-    //         .to_string_lossy()
-    //         .to_string(),
-    // );
-    // println!("data: {:?}", data);
-
     Ok(input_path.to_path_buf())
 }
 
 #[tauri::command]
-fn collect_rename_files(
-    state: tauri::State<'_, AppState>,
-) -> Result<DropView, String> {
+fn collect_rename_files(state: tauri::State<'_, AppState>) -> Result<DropView, String> {
     let input_path = state.source.lock().unwrap();
-    let files = eximd::file::collect_files(&input_path);
+    let files = eximd::dir::collect_files(&input_path)?;
     let mut file_map: HashMap<String, FileGroupState> = HashMap::new();
 
     for file in files {
@@ -226,9 +179,12 @@ fn collect_rename_files(
         }
     }
 
-    let files = file_map
-        .into_iter()
-        .flat_map(|(_, group)| FileView::try_new(group, input_path.as_path()))
+    let mut group_map = state.file_group.lock().unwrap();
+    *group_map = file_map.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+
+    let files = group_map
+        .iter()
+        .flat_map(|group| FileView::try_new(group.clone()))
         .collect::<Vec<_>>();
     let file_count = files.len();
 
@@ -247,7 +203,11 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![drop_input, collect_rename_files])
+        .invoke_handler(tauri::generate_handler![
+            drop_input,
+            collect_rename_files,
+            start_exif_collection
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,5 +1,5 @@
-use core::exif::{get_exif_metadata, ExifMetadata};
-use core::file::collect_files;
+use core::dir::collect_files;
+use core::exif::{self, ExifMetadata};
 use core::utils;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashSet;
@@ -13,7 +13,7 @@ pub fn exec(path: &Path) -> Result<(), Box<dyn Error>> {
     let time = std::time::Instant::now();
     let path_string = utils::path_to_string(path);
     println!("Collecting file paths in '{}'", path_string);
-    let files = collect_files(path);
+    let files = collect_files(path)?;
 
     println!("Collecting file metadata in '{}'", path_string);
     let progress = ProgressBar::new(files.len().try_into()?).with_style(
@@ -22,11 +22,7 @@ pub fn exec(path: &Path) -> Result<(), Box<dyn Error>> {
     );
     let mut exif_files = vec![];
     for (i, file) in files.iter().enumerate() {
-        let path = file.path();
-        if let Some(exif_file) = get_exif_metadata(path).or_else(|| {
-            eprintln!("{:?} -> Could not parse exif metadata", path);
-            None
-        }) {
+        if let Some(exif_file) = exif::get_exif_file_from_input(&"exiftool", file).metadata {
             exif_files.push(exif_file);
         }
         progress.set_message(format!("Processing item {}", i));

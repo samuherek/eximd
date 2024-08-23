@@ -1,47 +1,10 @@
 use super::super::config::RunType;
 use super::super::file_system::FileSystem;
-use chrono::NaiveDateTime;
-use core::exif::{self, ExifMetadata};
+use core::exif;
+use core::file::FilePath;
 use core::file::InputFile;
 use core::utils;
 use std::collections::HashMap;
-use std::path::PathBuf;
-
-pub struct ExifDateFile {
-    src: PathBuf,
-    _stem: String,
-    ext: String,
-    date_time_original: Option<NaiveDateTime>,
-    creation_date: Option<NaiveDateTime>,
-}
-
-impl ExifDateFile {
-    fn new(file: &InputFile, info: &ExifMetadata) -> Self {
-        Self {
-            src: file.src.clone(),
-            _stem: file.stem.clone(),
-            ext: file.ext.clone(),
-            date_time_original: info.date_time_original,
-            creation_date: info.creation_date,
-        }
-    }
-
-    fn next_file_stem(&self) -> Option<String> {
-        // TODO: Parametize the format of the date?
-        self.date_time_original
-            .or(self.creation_date)
-            .map(|date| date.format("%Y-%m-%d_%H.%M.%S").to_string())
-    }
-
-    fn next_file_name(&self) -> Option<String> {
-        self.next_file_stem().map(|x| format!("{}.{}", x, self.ext))
-    }
-
-    fn next_file_src(&self) -> Option<PathBuf> {
-        self.next_file_name()
-            .map(|name| self.src.with_file_name(name))
-    }
-}
 
 struct FileGroup<'a> {
     primary: Vec<&'a InputFile>,
@@ -66,21 +29,17 @@ impl<'a> FileGroup<'a> {
 }
 
 enum ProcessError {
-    UncertainPriaryFile(Vec<PathBuf>),
-}
-
-fn get_exif_file(item: &InputFile) -> ExifDateFile {
-    let exif_date = exif::get_exif_metadata(item.path()).unwrap_or_default();
-    ExifDateFile::new(item, &exif_date)
+    UncertainPriaryFile(Vec<FilePath>),
 }
 
 pub fn process_files<F: FileSystem>(fs: &F, files: &[InputFile]) {
+    let cmd_path = "exiftool";
     let mut groups: HashMap<String, FileGroup> = HashMap::new();
     let mut errors: Vec<ProcessError> = Vec::new();
 
     for item in files {
         let g = groups.entry(item.hash_key()).or_insert(FileGroup::new());
-        if utils::is_primary_ext(&item.ext) {
+        if utils::is_primary_ext(item.ext.value()) {
             g.push_primary(&item);
         } else {
             g.push_secondary(&item);
@@ -107,32 +66,29 @@ pub fn process_files<F: FileSystem>(fs: &F, files: &[InputFile]) {
         //      same name (we assume they had different extensions).
         } else if prim_len > 0 && sec_len == 0 {
             for item in group.primary {
-                let item = get_exif_file(item);
+                let item = exif::get_exif_file_from_input(&cmd_path, item);
                 if let Some(next_src) = item.next_file_src() {
-                    match fs.rename(&item.src.as_path(), &next_src.as_path()) {
+                    match fs.rename(&item.src.value(), &next_src.as_path()) {
                         Ok(_) => {
                             println!(
                                 "{} -> {}",
-                                utils::path_to_string(&item.src),
+                                item.src.as_str(),
                                 utils::path_to_string(&next_src)
                             );
                         }
                         Err(err) => {
-                            eprintln!("{} -> {}", utils::path_to_string(&item.src), err);
+                            eprintln!("{} -> {}", item.src.as_str(), err);
                         }
                     }
                 } else {
-                    println!(
-                        "{} -> Did not find clear exif date",
-                        utils::path_to_string(&item.src)
-                    )
+                    println!("{} -> Did not find clear exif date", item.src.as_str())
                 }
             }
         // 3. We have only the secondary files. We don't rename at this point.
         //      We might add this  in the future if we find it usefull.
         } else if prim_len == 0 && sec_len > 0 {
             for item in group.secondary {
-                println!("{} -> Not a media file", utils::path_to_string(&item.src));
+                println!("{} -> Not a media file", item.src.as_str());
             }
         // 4. we have exactly one prim file and some secondary files and if something
         //      fails here, we need a rollback all the changes within this group
@@ -143,9 +99,9 @@ pub fn process_files<F: FileSystem>(fs: &F, files: &[InputFile]) {
                 .primary
                 .get(0)
                 .expect("At this point we need to have one exif file");
-            let prim_file = get_exif_file(prim_file);
+            let prim_file = exif::get_exif_file_from_input(&cmd_path, prim_file);
             if let Some(next_stem) = prim_file.next_file_stem() {
-                let prim_prev_src = prim_file.src.as_path();
+                let prim_prev_src = prim_file.src.value().as_path();
                 let prim_next_file_src = prim_file
                     .next_file_src()
                     .expect("We already have a stem. We need to have the src");
@@ -160,16 +116,16 @@ pub fn process_files<F: FileSystem>(fs: &F, files: &[InputFile]) {
                         processed.push((prim_prev_src.to_path_buf(), prim_next_src.to_path_buf()));
                     }
                     Err(err) => {
-                        eprintln!("{} -> {}", utils::path_to_string(&prim_file.src), err);
+                        eprintln!("{} -> {}", prim_file.src.as_str(), err);
                         needs_rollback = true;
                     }
                 }
                 for item in group.secondary {
-                    let item = get_exif_file(item);
-                    let sec_prev_src = item.src.as_path();
-                    let sec_next_file_src = item
-                        .src
-                        .with_file_name(format!("{}.{}", next_stem, item.ext));
+                    let item = exif::get_exif_file_from_input(&cmd_path, item);
+                    let sec_prev_src = item.src.value().as_path();
+                    let sec_next_file_src =
+                        item.src
+                            .with_file_name(format!("{}.{}", next_stem, item.ext.value()));
                     let sec_next_src = sec_next_file_src.as_path();
                     if !needs_rollback {
                         match fs.rename(sec_prev_src, sec_next_src) {
@@ -183,7 +139,7 @@ pub fn process_files<F: FileSystem>(fs: &F, files: &[InputFile]) {
                                     .push((sec_prev_src.to_path_buf(), sec_next_src.to_path_buf()));
                             }
                             Err(err) => {
-                                eprintln!("{} -> {}", utils::path_to_string(&prim_file.src), err);
+                                eprintln!("{} -> {}", prim_file.src.as_str(), err);
                                 needs_rollback = true;
                             }
                         }
@@ -212,10 +168,7 @@ pub fn process_files<F: FileSystem>(fs: &F, files: &[InputFile]) {
                 }
             } else {
                 for item in group.primary.iter().chain(group.secondary.iter()) {
-                    println!(
-                        "{} -> Did not find clear exif date",
-                        utils::path_to_string(&item.src)
-                    )
+                    println!("{} -> Did not find clear exif date", item.src.as_str())
                 }
             }
         } else {
@@ -227,7 +180,7 @@ pub fn process_files<F: FileSystem>(fs: &F, files: &[InputFile]) {
         match error {
             ProcessError::UncertainPriaryFile(paths) => {
                 for path in paths {
-                    println!("{} -> Uncertain Primary file", utils::path_to_string(&path));
+                    println!("{} -> Uncertain Primary file", path.as_str());
                 }
             }
         }

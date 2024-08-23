@@ -1,7 +1,8 @@
+use super::file::{FileExt, FilePath, FileStem, FileType, InputFile};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use std::error::Error;
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 // "GPSLatitude": "53 deg 12' 16.92\" N",
@@ -41,6 +42,8 @@ pub struct ExifMetadata {
 }
 
 impl std::hash::Hash for ExifMetadata {
+    // This hash function is needed in order to create a unieuq
+    // hash key that represents possibly unique file exif data
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.file_size.hash(state);
         self.file_type.hash(state);
@@ -86,7 +89,69 @@ where
     }
 }
 
-pub fn obj_str_from_array_of_one(data: &str) -> Result<String, Box<dyn Error>> {
+#[derive(Debug)]
+pub struct ExifFile {
+    pub src: FilePath,
+    pub src_relative: FilePath,
+    pub stem: FileStem,
+    pub ext: FileExt,
+    pub file_type: FileType,
+    pub metadata: Option<ExifMetadata>,
+}
+
+impl ExifFile {
+    fn new(file: &InputFile, info: ExifMetadata) -> Self {
+        Self {
+            src: file.src.clone(),
+            src_relative: file.src_relative.clone(),
+            stem: file.stem.clone(),
+            ext: file.ext.clone(),
+            file_type: file.file_type.clone(),
+            metadata: Some(info),
+        }
+    }
+
+    pub fn next_file_stem(&self) -> Option<String> {
+        // TODO: Parametize the format of the date
+        self.metadata
+            .as_ref()
+            .map(|x| {
+                x.date_time_original
+                    .or(x.creation_date)
+                    .map(|date| date.format("%Y-%m-%d_%H.%M.%S").to_string())
+            })
+            .flatten()
+    }
+
+    fn next_file_name(&self) -> Option<String> {
+        self.next_file_stem()
+            .map(|x| format!("{}.{}", x, self.ext.value()))
+    }
+
+    pub fn next_file_src(&self) -> Option<PathBuf> {
+        self.next_file_name()
+            .map(|name| self.src.with_file_name(name))
+    }
+}
+
+impl From<InputFile> for ExifFile {
+    fn from(file: InputFile) -> Self {
+        Self {
+            src: file.src,
+            src_relative: file.src_relative,
+            stem: file.stem,
+            ext: file.ext,
+            file_type: file.file_type,
+            metadata: None,
+        }
+    }
+}
+
+// When getting the data for each item from the exiftool and stdout
+// it is passed as an array of objects serde does not automatically pares it.
+// We take away all the wrapper stuff and return a valid object that can be
+// serde paresd.
+fn obj_str_from_array_of_one(data: &str) -> Result<String, Box<dyn Error>> {
     let mut buffer = String::new();
 
     for mut line in data.lines() {
@@ -115,11 +180,15 @@ pub fn obj_str_from_array_of_one(data: &str) -> Result<String, Box<dyn Error>> {
     panic!("Should never get here.");
 }
 
-pub fn get_exif_metadata<P: AsRef<Path>>(path: P) -> Option<ExifMetadata> {
-    let cmd = Command::new("exiftool")
-        .args(["-j", path.as_ref().to_str().unwrap()])
+// This function runs the exiftool command which's path is passed
+// as the cmd_path argument. And it will get the exif data
+// and return it as a JSON object in a string.
+// TODO: See if we need to return an error or doing these expects are ok
+fn get_exif_metadata_from_cmd(cmd_path: &str, path: &FilePath) -> Option<ExifMetadata> {
+    let cmd = Command::new(cmd_path)
+        .args(["-j", path.as_str()])
         .output()
-        .expect("`exiftool` cli be available on the system");
+        .expect("tu run exiftool command");
 
     let data = String::from_utf8(cmd.stdout).expect("convert the utf8 into a string");
     let value = match obj_str_from_array_of_one(&data) {
@@ -136,4 +205,16 @@ pub fn get_exif_metadata<P: AsRef<Path>>(path: P) -> Option<ExifMetadata> {
             None
         }
     }
+}
+
+// This is the primary function to run to get from input file to
+// the actul file with dir info and metadata info.
+// Get the exift data and merge them with the InputFile from the
+// exiftool from the command line.
+//
+// TODO: Maybe we need to return a result? Maybe we need to notify the user somehow?
+// But probably not. If we have "none" for the exif metadata, it's missing.
+pub fn get_exif_file_from_input(cmd_path: &str, item: &InputFile) -> ExifFile {
+    let data = get_exif_metadata_from_cmd(cmd_path, &item.src).unwrap_or_default();
+    ExifFile::new(item, data)
 }
