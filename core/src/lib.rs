@@ -1,4 +1,4 @@
-pub mod exif;
-pub mod utils;
-pub mod file;
 pub mod dir;
+pub mod exif;
+pub mod file;
+pub mod utils;

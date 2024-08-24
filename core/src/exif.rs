@@ -1,6 +1,8 @@
 use super::file::{FileExt, FilePath, FileStem, FileType, InputFile};
+use super::utils;
 use chrono::NaiveDateTime;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
@@ -21,7 +23,7 @@ use std::process::Command;
 // "GPSLongitude": "6 deg 32' 13.56\" E",
 // "GPSPosition": "53 deg 12' 16.20\" N, 6 deg 32' 13.56\" E"
 
-#[derive(Debug, serde::Deserialize, Default)]
+#[derive(Debug, serde::Deserialize, Default, Clone)]
 #[serde(rename_all = "PascalCase")]
 pub struct ExifMetadata {
     pub source_file: String,
@@ -89,7 +91,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExifFile {
     pub src: FilePath,
     pub src_relative: FilePath,
@@ -132,6 +134,11 @@ impl ExifFile {
         self.next_file_name()
             .map(|name| self.src.with_file_name(name))
     }
+
+    pub fn fetch_and_set_metadata(&mut self, cmd_path: &str) -> &Self {
+        self.metadata = get_exif_metadata_from_cmd(cmd_path, &self.src);
+        self
+    }
 }
 
 impl From<InputFile> for ExifFile {
@@ -142,6 +149,19 @@ impl From<InputFile> for ExifFile {
             stem: file.stem,
             ext: file.ext,
             file_type: file.file_type,
+            metadata: None,
+        }
+    }
+}
+
+impl From<&InputFile> for ExifFile {
+    fn from(file: &InputFile) -> Self {
+        Self {
+            src: file.src.clone(),
+            src_relative: file.src_relative.clone(),
+            stem: file.stem.clone(),
+            ext: file.ext.clone(),
+            file_type: file.file_type.clone(),
             metadata: None,
         }
     }
@@ -217,4 +237,136 @@ fn get_exif_metadata_from_cmd(cmd_path: &str, path: &FilePath) -> Option<ExifMet
 pub fn get_exif_file_from_input(cmd_path: &str, item: &InputFile) -> ExifFile {
     let data = get_exif_metadata_from_cmd(cmd_path, &item.src).unwrap_or_default();
     ExifFile::new(item, data)
+}
+
+#[derive(Debug, Clone)]
+pub enum FileNameGroup {
+    Image {
+        image: ExifFile,
+        config: Vec<ExifFile>,
+    },
+    LiveImage {
+        image: ExifFile,
+        video: ExifFile,
+        config: Vec<ExifFile>,
+    },
+    Video {
+        video: ExifFile,
+        config: Vec<ExifFile>,
+    },
+    Uncertain(Vec<ExifFile>),
+}
+
+impl FileNameGroup {
+    pub fn merge_into_refs(&self) -> Vec<&ExifFile> {
+        let mut merged = Vec::new();
+        match self {
+            Self::Image { image, config } => {
+                merged.push(image);
+                merged.extend(config.iter())
+            }
+            Self::LiveImage {
+                image,
+                config,
+                video,
+            } => {
+                merged.push(image);
+                merged.push(video);
+                merged.extend(config.iter())
+            }
+            Self::Video { video, config } => {
+                merged.push(video);
+                merged.extend(config.iter())
+            }
+            Self::Uncertain(items) => merged.extend(items.iter()),
+        }
+        merged
+    }
+}
+
+pub fn group_same_name_files(files: &[InputFile]) -> Vec<FileNameGroup> {
+    let mut groups: HashMap<String, (Vec<ExifFile>, Vec<ExifFile>)> = HashMap::new();
+
+    for item in files {
+        let g = groups
+            .entry(item.hash_key())
+            .or_insert((Vec::new(), Vec::new()));
+        if utils::is_primary_ext(item.ext.value()) {
+            g.0.push(ExifFile::from(item));
+        } else {
+            g.1.push(ExifFile::from(item));
+        }
+    }
+
+    let mut file_name_groups = Vec::new();
+    for (_, (prim, sec)) in groups {
+        let prim_len = prim.len();
+        let sec_len = sec.len();
+
+        // TODO: Update logic for this:
+        // We assume that every photo might have a live photo.
+        // If we have a photo, we try to find the corresponding live video.
+        // If there is more videos we do the uncertainty stuff.
+        // Otherwise, we create a live photo out of this.
+
+        // 1. In case we have more primary files with a possible date
+        // and we have some secondary files as well, we don't konw
+        // which "date_name" to choose. So we return uncertain.
+        if prim_len > 1 && sec_len > 0 {
+            let next_files = prim.into_iter().chain(sec.into_iter()).collect::<Vec<_>>();
+            file_name_groups.push(FileNameGroup::Uncertain(next_files));
+
+            // TODO: At this point, we might have a photo, that is also a live photo
+            // that also has some config files. So we need to keep this togehter,
+            // and ask the user to resolve the file name origin.
+
+            // 2. we have only primary files and then we simple convert them
+            // based on the extension and push to the vec.
+        } else if prim_len > 0 && sec_len == 0 {
+            // TODO: we should handle the live photo here....
+            for file in prim {
+                let next = match file.file_type {
+                    FileType::IMG => FileNameGroup::Image {
+                        image: file,
+                        config: Vec::new(),
+                    },
+                    FileType::VIDEO => FileNameGroup::Video {
+                        video: file,
+                        config: Vec::new(),
+                    },
+                    _ => FileNameGroup::Uncertain(vec![file]),
+                };
+                file_name_groups.push(next);
+            }
+        // 3. If we only have secondary files, we put them in the
+        // uncertain category as we don't know if we want to rename them.
+        } else if prim_len == 0 && sec_len > 0 {
+            file_name_groups.push(FileNameGroup::Uncertain(sec));
+        // 4. we have exactly one prim file and some secondary files which
+        // indicates that it's something like a photo with edits.
+        } else if prim_len == 1 && sec_len > 0 {
+            let prim = prim.get(0).expect("to have the first element").to_owned();
+            let next = match prim.file_type {
+                FileType::IMG => FileNameGroup::Image {
+                    image: prim,
+                    config: sec,
+                },
+                FileType::VIDEO => FileNameGroup::Video {
+                    video: prim,
+                    config: sec,
+                },
+                _ => {
+                    let mut g = Vec::new();
+                    g.extend(sec);
+                    g.push(prim);
+                    FileNameGroup::Uncertain(g)
+                }
+            };
+            file_name_groups.push(next);
+        } else {
+            unreachable!();
+        }
+    }
+
+    file_name_groups
 }

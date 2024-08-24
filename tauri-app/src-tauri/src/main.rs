@@ -1,10 +1,8 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use eximd::exif::{get_exif_file_from_input, ExifFile};
-use eximd::file::{FileType, InputFile};
-use std::collections::HashMap;
+use eximd::exif::{get_exif_file_from_input, ExifFile, FileNameGroup};
+use eximd::file::FileType;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Manager, Window};
@@ -12,17 +10,10 @@ use tauri::{AppHandle, Manager, Window};
 // 1. load the source -> stick the dir in the state
 // 2. collect files -> collect and group files into file groups -> emit a new file
 
-#[derive(Default, Debug, Clone)]
-struct FileGroupState {
-    image: Option<InputFile>,
-    configs: Vec<InputFile>,
-    video: Option<InputFile>,
-}
-
 #[derive(Default, Debug)]
 struct AppState {
     source: Mutex<PathBuf>,
-    file_group: Arc<Mutex<Vec<FileGroupState>>>,
+    file_group: Arc<Mutex<Vec<FileNameGroup>>>,
 }
 
 #[derive(Debug, serde::Serialize, Clone)]
@@ -53,6 +44,7 @@ struct FileView {
     file_type: FileType,
     file_configs: Vec<FileRelated>,
     file_live_photo: Option<FileRelated>,
+    error: Option<String>,
 }
 
 impl FileView {
@@ -68,8 +60,11 @@ impl FileView {
         }
     }
 
-    fn try_new(group: FileGroupState) -> Result<Self, String> {
-        let mut main_file = group.image.map(|x| FileView::new(&ExifFile::from(x)));
+    fn try_new(group: AppFileGroup) -> Result<Self, String> {
+        // 1. if there is more primary files than one, then
+
+        let mut main_file = group.primary.map(|x| FileView::new(&ExifFile::from(x)));
+
         if let Some(video) = group.video {
             match main_file {
                 Some(ref mut file) => {
@@ -102,11 +97,6 @@ struct DropView {
 #[derive(Debug, serde::Deserialize)]
 struct DropInputPayload {
     items: Vec<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ExifFileData {
-    src: String,
 }
 
 #[tauri::command]
@@ -165,22 +155,10 @@ async fn drop_input(
 fn collect_rename_files(state: tauri::State<'_, AppState>) -> Result<DropView, String> {
     let input_path = state.source.lock().unwrap();
     let files = eximd::dir::collect_files(&input_path)?;
-    let mut file_map: HashMap<String, FileGroupState> = HashMap::new();
-
-    for file in files {
-        let entry = file_map
-            .entry(file.hash_key())
-            .or_insert(FileGroupState::default());
-
-        match file.file_type {
-            FileType::IMG => entry.image = Some(file),
-            FileType::VIDEO => entry.video = Some(file),
-            _ => entry.configs.push(file),
-        }
-    }
+    let file_groups = eximd::exif::group_same_name_files(&files);
 
     let mut group_map = state.file_group.lock().unwrap();
-    *group_map = file_map.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+    *group_map = file_groups;
 
     let files = group_map
         .iter()
