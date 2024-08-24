@@ -30,6 +30,7 @@ const appMachine = setup({
         },
         event: { type: "NAV_RENAME", paylaod: string }
         | { type: "NAV_DEDUPLICATE", payload: string }
+        | { type: "RESET_TO_INTRO" }
     },
     actions: {
         setSource: assign({
@@ -70,9 +71,16 @@ const appMachine = setup({
                 src: 'renameMachine',
                 id: 'renameMachine',
                 input: ({ context }) => ({ source: context.source })
+            },
+            on: {
+                RESET_TO_INTRO: 'intro'
             }
         },
-        deduplicate: {}
+        deduplicate: {
+            on: {
+                RESET_TO_INTRO: 'intro'
+            }
+        }
     }
 });
 

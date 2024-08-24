@@ -384,6 +384,8 @@ pub fn rename_with_rollback<F: FileSystem, N: ExifNotifier>(
     fs: &F,
     nf: &N,
     items: Vec<&ExifFile>,
+    // TODO:::::::: BUGGGGG> NOT A NEXT_SRC BUT A NEXT STEM AND BUILD THE PATH HERE!!!!!!!
+    // otherwise it took the extensions from the original file and applied it to all files.
     next_src: &Path,
 ) {
     let mut processed = vec![];

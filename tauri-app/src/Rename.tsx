@@ -1,4 +1,4 @@
-import { ActorRefFrom, assign, fromCallback, fromPromise, setup } from "xstate";
+import { ActorRefFrom, assign, fromCallback, fromPromise, sendParent, setup } from "xstate";
 import { useSelector } from "@xstate/react";
 import { raiseErrorToUI } from './utils';
 import { invoke } from "@tauri-apps/api";
@@ -8,8 +8,26 @@ type Props = {
     actorRef: ActorRefFrom<typeof renameMachine>
 }
 
+type RelatedFile = {
+    src: string,
+    src_relative: string,
+    stem: string,
+    ext: string,
+}
+
+type FileView = {
+    src: string,
+    src_relative: string,
+    stem: string,
+    ext: string,
+    file_type: string,
+    file_configs: RelatedFile[],
+    file_live_photo: RelatedFile,
+    error: string | null
+};
+
 const tauriCollectCommand = fromPromise(async () => {
-    const res = await invoke<{ files: any[], file_count: number }>("collect_rename_files");
+    const res = await invoke<{ files: FileView[], file_count: number }>("collect_rename_files");
     return {
         items: res.files,
         file_count: res.file_count
@@ -34,19 +52,11 @@ const tauriExifDataListener = fromCallback(() => {
 
 const itemMachine = setup({
     types: {} as {
-        context: {
-            path: string,
-            relative_path: string,
-            name: string,
-            ext: string,
-            file_type: string,
-            file_configs: any[],
-            file_live_photo: any,
-            selected: boolean
-        },
+        context: FileView & { selected: boolean },
+        input: FileView,
         events: { type: "TOGGLE_ITEM" }
         | { type: "DESELECT_ITEM" }
-        | { type: "SELECT_ITEM" }
+        | { type: "SELECT_ITEM" },
     },
     guards: {
         isSelected: ({ context }) => context.selected === true,
@@ -54,14 +64,15 @@ const itemMachine = setup({
     }
 }).createMachine({
     context: ({ input }: { input: any }) => ({
-        path: input.path,
-        relative_path: input.relative_path,
-        name: input.name,
+        src: input.src,
+        src_relative: input.src_relative,
+        stem: input.stem,
         ext: input.ext,
         file_type: input.file_type,
         file_configs: input.file_configs,
         file_live_photo: input.file_live_photo,
-        selected: true
+        selected: true,
+        error: input.error ?? null
     }),
     on: {
         TOGGLE_ITEM: {
@@ -94,6 +105,7 @@ const renameMachine = setup({
         },
         events: { type: "TOGGLE_SELECTION_ALL" }
         | { type: "EXIF_ITEM_COLLECTED" }
+        | { type: "RESET_TO_INTRO" }
     },
     actors: {
         tauriCollectCommand,
@@ -118,7 +130,7 @@ const renameMachine = setup({
                         actions: assign({
                             items: ({ event, spawn }) => event.output.items.map(
                                 (item) => spawn(itemMachine, {
-                                    id: item.path,
+                                    id: item.src,
                                     input: item
                                 })
                             ),
@@ -161,7 +173,8 @@ const renameMachine = setup({
             },
             committing: {
                 on: {
-                    TOGGLE_SELECTION_ALL: {}
+                    TOGGLE_SELECTION_ALL: {},
+                    RESET_TO_INTRO: {}
                 }
             }
         },
@@ -186,6 +199,9 @@ const renameMachine = setup({
                             })
                         }
                     }]
+            },
+            RESET_TO_INTRO: {
+                actions: sendParent({ type: "RESET_TO_INTRO" })
             }
         }
     }
@@ -193,7 +209,7 @@ const renameMachine = setup({
 
 function Item({ actorRef }: { actorRef: ActorRefFrom<typeof itemMachine> }) {
     const item = useSelector(actorRef, state => {
-        // console.log("item state", state);
+        // console.log("item state", state.context);
         return state.context
     });
 
@@ -211,9 +227,11 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof itemMachine> }) {
                     <path className="fa-secondary" opacity=".4" d="M0 288c0 17.7 14.3 32 32 32l32 0 0 128c0 35.3 28.7 64 64 64l256 0c35.3 0 64-28.7 64-64l0-16 0-96 0-16c0-35.3-28.7-64-64-64l-32 0-224 0-64 0-32 0c-17.7 0-32 14.3-32 32z" />
                     <path className="fa-primary" d="M128 64a64 64 0 1 0 0 128 64 64 0 1 0 0-128zM352 256l-224 0C57.3 256 0 198.7 0 128S57.3 0 128 0c48.2 0 90.2 26.6 112 66C261.8 26.6 303.8 0 352 0c70.7 0 128 57.3 128 128s-57.3 128-128 128zm0-192a64 64 0 1 0 0 128 64 64 0 1 0 0-128zM558.3 259.4c10.8 5.4 17.7 16.5 17.7 28.6l0 192c0 12.1-6.8 23.2-17.7 28.6s-23.8 4.3-33.5-3l-64-48L448 448l0-16 0-96 0-16 12.8-9.6 64-48c9.7-7.3 22.7-8.4 33.5-3z" />
                 </svg>
-            ) : undefined}
+            ) : (
+                <svg className="ml-1 w-4 mr-4" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path className="fa-secondary" opacity=".4" d="M0 64L0 448c0 35.3 28.7 64 64 64l256 0c35.3 0 64-28.7 64-64l0-288-128 0c-17.7 0-32-14.3-32-32L224 0 64 0C28.7 0 0 28.7 0 64z" /><path class="fa-primary" d="M224 0L384 160H256c-17.7 0-32-14.3-32-32V0z" /></svg>
+            )}
             <div className="flex mr-8">
-                <span className="mr-4">{item.relative_path}</span>
+                <span className="mr-4">{item.src_relative}</span>
             </div>
             <div className="flex ml-auto">
                 {item.file_configs.map((config: any, i: number) => (
@@ -229,7 +247,7 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof itemMachine> }) {
 
 function Rename({ actorRef }: Props) {
     const source = useSelector(actorRef, (state) => {
-        console.log("rename state", state);
+        // console.log("rename state", state);
         return state.context.source;
     });
     const file_count = useSelector(actorRef, (state) => state.context.file_count);
@@ -243,7 +261,17 @@ function Rename({ actorRef }: Props) {
 
     return (
         <div className="">
-            <div className="flex items-center justify-center mb-12">
+            <div className="flex items-center justify-center mb-4">
+                <button
+                    type="button"
+                    className={"text-white items-center outline-none font-medium rounded-md text-sm py-1.5 px-3 text-center inline-flex bg-amber-700 hover:bg-amber-800 dark:bg-amber-600 dark:hover:bg-amber-700 dark:focus:ring-amber-800"}
+                    onClick={() => actorRef.send({ type: "RESET_TO_INTRO" })}
+                >
+                    Start over
+                </button>
+
+            </div>
+            <div className="flex items-center justify-center mb-8">
                 <p>
                     This will rename the following files to the format `YY-MM-DD_HH-MM-SS.ext`.
                 </p>

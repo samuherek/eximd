@@ -1,6 +1,6 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use eximd::exif::{get_exif_file_from_input, ExifFile, FileNameGroup};
+use eximd::exif::FileNameGroup;
 use eximd::file::FileType;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -24,19 +24,8 @@ struct FileRelated {
     ext: String,
 }
 
-impl FileRelated {
-    fn new(input: &ExifFile) -> Self {
-        Self {
-            src: input.src.to_string(),
-            src_relative: input.src.to_string(),
-            stem: input.stem.to_string(),
-            ext: input.ext.to_string(),
-        }
-    }
-}
-
 #[derive(Debug, serde::Serialize, Clone)]
-struct FileView {
+struct FileNameGroupView {
     src: String,
     src_relative: String,
     stem: String,
@@ -47,50 +36,96 @@ struct FileView {
     error: Option<String>,
 }
 
-impl FileView {
-    fn new(input: &ExifFile) -> Self {
-        Self {
-            src: input.src.to_string(),
-            src_relative: input.src_relative.to_string(),
-            stem: input.stem.to_string(),
-            ext: input.ext.to_string(),
-            file_type: input.file_type.clone(),
-            file_configs: vec![],
-            file_live_photo: None,
+fn file_views_from_file_name_group(group: &FileNameGroup) -> Vec<FileNameGroupView> {
+    match group {
+        FileNameGroup::Image { image, config } => {
+            vec![FileNameGroupView {
+                src: image.src.to_string(),
+                src_relative: image.src_relative.to_string(),
+                stem: image.stem.to_string(),
+                ext: image.ext.to_string(),
+                file_type: image.file_type.clone(),
+                file_configs: config
+                    .iter()
+                    .map(|x| FileRelated {
+                        src: x.src.to_string(),
+                        src_relative: x.src_relative.to_string(),
+                        stem: x.stem.to_string(),
+                        ext: x.ext.to_string(),
+                    })
+                    .collect(),
+                file_live_photo: None,
+                error: None,
+            }]
         }
-    }
-
-    fn try_new(group: AppFileGroup) -> Result<Self, String> {
-        // 1. if there is more primary files than one, then
-
-        let mut main_file = group.primary.map(|x| FileView::new(&ExifFile::from(x)));
-
-        if let Some(video) = group.video {
-            match main_file {
-                Some(ref mut file) => {
-                    file.file_live_photo = Some(FileRelated::new(&ExifFile::from(video)));
-                }
-                None => {
-                    main_file = Some(FileView::new(&ExifFile::from(video)));
-                }
-            }
+        FileNameGroup::LiveImage {
+            image,
+            video,
+            config,
+        } => {
+            vec![FileNameGroupView {
+                src: image.src.to_string(),
+                src_relative: image.src_relative.to_string(),
+                stem: image.stem.to_string(),
+                ext: image.ext.to_string(),
+                file_type: image.file_type.clone(),
+                file_configs: config
+                    .iter()
+                    .map(|x| FileRelated {
+                        src: x.src.to_string(),
+                        src_relative: x.src_relative.to_string(),
+                        stem: x.stem.to_string(),
+                        ext: x.ext.to_string(),
+                    })
+                    .collect(),
+                file_live_photo: Some(FileRelated {
+                    src: video.src.to_string(),
+                    src_relative: video.src_relative.to_string(),
+                    stem: video.stem.to_string(),
+                    ext: video.ext.to_string(),
+                }),
+                error: None,
+            }]
         }
-
-        if let Some(ref mut main_file) = main_file {
-            for config in group.configs {
-                main_file
-                    .file_configs
-                    .push(FileRelated::new(&ExifFile::from(config)));
-            }
+        FileNameGroup::Video { video, config } => {
+            vec![FileNameGroupView {
+                src: video.src.to_string(),
+                src_relative: video.src_relative.to_string(),
+                stem: video.stem.to_string(),
+                ext: video.ext.to_string(),
+                file_type: video.file_type.clone(),
+                file_configs: config
+                    .iter()
+                    .map(|x| FileRelated {
+                        src: x.src.to_string(),
+                        src_relative: x.src_relative.to_string(),
+                        stem: x.stem.to_string(),
+                        ext: x.ext.to_string(),
+                    })
+                    .collect(),
+                file_live_photo: None,
+                error: None,
+            }]
         }
-
-        main_file.ok_or("Could not create a file group.".into())
+        FileNameGroup::Uncertain(config) => config
+            .iter()
+            .map(|x| FileNameGroupView {
+                src: x.src.to_string(),
+                src_relative: x.src_relative.to_string(),
+                stem: x.stem.to_string(),
+                ext: x.ext.to_string(),
+                file_type: x.file_type.clone(),
+                file_configs: vec![],
+                file_live_photo: None,
+                error: None,
+            })
+            .collect(),
     }
 }
 
 #[derive(serde::Serialize, Clone)]
 struct DropView {
-    files: Vec<FileView>,
+    files: Vec<FileNameGroupView>,
     file_count: usize,
 }
 
@@ -99,13 +134,20 @@ struct DropInputPayload {
     items: Vec<String>,
 }
 
+#[derive(Debug, serde::Serialize, Clone)]
+struct ExifFileData {
+    idx: usize,
+    src: PathBuf,
+    next_src: PathBuf,
+}
+
 #[tauri::command]
 fn start_exif_collection(
     app_handle: AppHandle,
     state: tauri::State<'_, AppState>,
     window: Window,
 ) -> Result<(), String> {
-    let file_group = state.file_group.lock().unwrap().clone();
+    let mut file_group = state.file_group.lock().unwrap().clone();
     let resource_path = app_handle
         .path_resolver()
         .resolve_resource("../binaries")
@@ -116,14 +158,75 @@ fn start_exif_collection(
             .join("exiftool/exiftool")
             .to_string_lossy()
             .to_string();
-        for (i, file_group) in file_group.iter().enumerate() {
-            if let Some(image) = &file_group.image {
-                let data = get_exif_file_from_input(&cmd_path, image);
-                println!("processsed {:?}", data);
-                window
-                    .emit("EXIF_FILE_DATA", "")
-                    .expect("to emit event to the FE");
+        for (i, mut group) in file_group.iter_mut().enumerate() {
+            match &mut group {
+                FileNameGroup::Image { image, .. } => {
+                    image.fetch_and_set_metadata(&cmd_path);
+                    if let Some(next_src) = image.next_file_src() {
+                        // let mut file_group = state.file_group.lock().unwrap();
+                        // *file_group[i].image = image.clone();
+                        window
+                            .emit(
+                                "EXIF_FILE_DATA",
+                                ExifFileData {
+                                    idx: i,
+                                    src: image.src.value().to_owned(),
+                                    next_src: next_src.clone(),
+                                },
+                            )
+                            .expect("send message to the FE");
+                    } else {
+                    }
+                }
+                FileNameGroup::Video { video, .. } => {
+                    video.fetch_and_set_metadata(&cmd_path);
+                    if let Some(next_src) = video.next_file_src() {
+                        // rename_with_rollback(nf, group.merge_into_refs(), &next_src);
+                        window
+                            .emit(
+                                "EXIF_FILE_DATA",
+                                ExifFileData {
+                                    idx: i,
+                                    src: video.src.value().to_owned(),
+                                    next_src: next_src.clone(),
+                                },
+                            )
+                            .expect("send message to the FE");
+                    }
+                }
+                FileNameGroup::LiveImage { image, .. } => {
+                    image.fetch_and_set_metadata(&cmd_path);
+                    if let Some(next_src) = image.next_file_src() {
+                        // rename_with_rollback(nf, group.merge_into_refs(), &next_src);
+                        window
+                            .emit(
+                                "EXIF_FILE_DATA",
+                                ExifFileData {
+                                    idx: i,
+                                    src: image.src.value().to_owned(),
+                                    next_src: next_src.clone(),
+                                },
+                            )
+                            .expect("send message to the FE");
+                    }
+                }
+                FileNameGroup::Uncertain(list) => {
+                    for item in list {
+                        // nf.uncertain(&item.src)
+                    }
+                }
             }
+            // 1. get the exif file from input -> no renaming yet.
+            // 2. updat the state lock
+            // 3. send the message to the FE
+
+            // if let Some(image) = &file_group.image {
+            //     let data = get_exif_file_from_input(&cmd_path, image);
+            //     println!("processsed {:?}", data);
+            //     window
+            //         .emit("EXIF_FILE_DATA", "")
+            //         .expect("to emit event to the FE");
+            // }
         }
     });
 
@@ -162,7 +265,7 @@ fn collect_rename_files(state: tauri::State<'_, AppState>) -> Result<DropView, S
 
     let files = group_map
         .iter()
-        .flat_map(|group| FileView::try_new(group.clone()))
+        .flat_map(|x| file_views_from_file_name_group(x))
         .collect::<Vec<_>>();
     let file_count = files.len();
 
