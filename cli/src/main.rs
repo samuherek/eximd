@@ -1,10 +1,8 @@
 mod commands;
 mod config;
-mod file_system;
 
 use clap::{Parser, Subcommand};
 use commands::rename;
-use file_system::RealFileSystem;
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -49,14 +47,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 config::RunType::Dry
             };
-            let fs = RealFileSystem::new(&mode);
             let path_buf = path.unwrap_or_else(|| {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
             });
             let files = core::dir::collect_files(&path_buf)?;
             rename::print_mode(&mode);
-            rename::process_files(&fs, &files);
+            rename::process_files(&files);
         }
         _ => {
             println!("Incorrect usage");

@@ -1,9 +1,8 @@
 use super::utils;
-use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FilePath(PathBuf);
 
 impl FilePath {
@@ -30,7 +29,7 @@ impl ToString for FilePath {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FileStem(String);
 
 impl FileStem {
@@ -56,7 +55,7 @@ impl ToString for FileStem {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FileExt(String);
 
 impl FileExt {
@@ -81,7 +80,7 @@ impl ToString for FileExt {
     }
 }
 
-#[derive(Debug, serde::Serialize, Clone)]
+#[derive(Debug, serde::Serialize, Clone, PartialEq)]
 pub enum FileType {
     IMG,
     VIDEO,
@@ -115,7 +114,7 @@ impl InputFile {
         let relative_path = absolute_path.value().to_owned();
         let relative_path = relative_path
             .strip_prefix(relative_point)
-            .expect("to strip the drop path prefix from foun file");
+            .expect("to strip the drop path prefix from found file");
         let src_relative = FilePath::new(relative_path);
         let stem = FileStem::new(absolute_path.value());
         let ext = FileExt::new(absolute_path.value());
@@ -131,5 +130,25 @@ impl InputFile {
 
     pub fn hash_key(&self) -> String {
         self.stem.to_string()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn create_an_image_input_file_from_image() {
+        let input_file = InputFile::new(
+            &FilePath::new(Path::new("path/to/file.jpg")),
+            Path::new("path"),
+        );
+
+        assert_eq!(input_file.src.value(), &Path::new("path/to/file.jpg"));
+        assert_eq!(input_file.src_relative.value(), &Path::new("to/file.jpg"));
+        assert_eq!(input_file.stem.value(), "file");
+        assert_eq!(input_file.ext.value(), "jpg");
+        assert_eq!(input_file.file_type, FileType::IMG);
     }
 }

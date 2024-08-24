@@ -4,6 +4,7 @@ use chrono::NaiveDateTime;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -369,4 +370,455 @@ pub fn group_same_name_files(files: &[InputFile]) -> Vec<FileNameGroup> {
     }
 
     file_name_groups
+}
+
+pub trait ExifNotifier {
+    fn rename_success(&self, prev: &FilePath, next: &Path) -> ();
+    fn rename_error(&self, prev: &FilePath, err: String) -> ();
+    fn rollback_success(&self, next: &Path, prev: &FilePath) -> ();
+    fn rollback_error(&self, next: &Path, err: String) -> ();
+    fn uncertain(&self, src: &FilePath) -> ();
+}
+
+fn rename_with_rollback<N: ExifNotifier>(nf: &N, items: Vec<&ExifFile>, next_src: &Path) {
+    let mut processed = vec![];
+    let mut needs_rollback = false;
+    for file in items {
+        if !needs_rollback {
+            match std::fs::rename(&file.src.value(), next_src) {
+                Ok(_) => {
+                    nf.rename_success(&file.src, next_src);
+                    processed.push((&file.src, next_src));
+                }
+                Err(err) => {
+                    nf.rename_error(&file.src, err.to_string());
+                    needs_rollback = true;
+                }
+            }
+        }
+    }
+
+    if needs_rollback {
+        for file in processed {
+            match std::fs::rename(file.1, file.0.value()) {
+                Ok(_) => {
+                    nf.rollback_success(file.1, file.0);
+                }
+                Err(err) => {
+                    nf.rollback_error(&file.1, err.to_string());
+                    // eprintln!(
+                    //     "ERROR: rolling back the {}: {}",
+                    //     utils::path_to_string(),
+                    //     err
+                    // )
+                }
+            }
+        }
+    }
+}
+
+// TODO: tests
+pub fn fetch_and_set_form_group<N: ExifNotifier>(
+    nf: &N,
+    cmd_path: &str,
+    group: &mut FileNameGroup,
+) {
+    match group {
+        FileNameGroup::Image { image, .. } => {
+            image.fetch_and_set_metadata(&cmd_path);
+            if let Some(next_src) = image.next_file_src() {
+                rename_with_rollback(nf, group.merge_into_refs(), &next_src);
+            }
+        }
+        FileNameGroup::Video { video, .. } => {
+            video.fetch_and_set_metadata(&cmd_path);
+            if let Some(next_src) = video.next_file_src() {
+                rename_with_rollback(nf, group.merge_into_refs(), &next_src);
+            }
+        }
+        FileNameGroup::LiveImage { image, .. } => {
+            image.fetch_and_set_metadata(&cmd_path);
+            if let Some(next_src) = image.next_file_src() {
+                rename_with_rollback(nf, group.merge_into_refs(), &next_src);
+            }
+        }
+        FileNameGroup::Uncertain(list) => {
+            for item in list {
+                nf.uncertain(&item.src)
+                // println!("{} -> Uncertain Primary file", item.src.as_str());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use serde_json;
+    use std::path::Path;
+
+    #[test]
+    fn test_parse_date_with_date_and_time() {
+        let json_data = r#"{
+            "SourceFile": "test.jpg",
+            "FileName": "test.jpg",
+            "FileSize": "1",
+            "DateTimeOriginal": "2021:10:10 12:34:56"
+        }"#;
+
+        let metadata: ExifMetadata = serde_json::from_str(json_data).unwrap();
+
+        assert_eq!(
+            metadata.date_time_original,
+            Some(
+                chrono::NaiveDateTime::parse_from_str("2021:10:10 12:34:56", "%Y:%m:%d %H:%M:%S")
+                    .unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn test_parse_date_with_date_and_time_and_zone() {
+        let json_data = r#"{
+            "SourceFile": "test.jpg",
+            "FileName": "test.jpg",
+            "FileSize": "1",
+            "DateTimeOriginal": "2022:03:17 17:37:48+01:00"
+        }"#;
+
+        let metadata: ExifMetadata = serde_json::from_str(json_data).unwrap();
+
+        assert_eq!(
+            metadata.date_time_original,
+            Some(
+                chrono::NaiveDateTime::parse_from_str("2022:03:17 17:37:48", "%Y:%m:%d %H:%M:%S")
+                    .unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn test_parse_date_with_date_only() {
+        let json_data = r#"{
+            "SourceFile": "test.jpg",
+            "FileName": "test.jpg",
+            "FileSize": "1",
+            "DateTimeOriginal": "2022:03:17"
+        }"#;
+
+        let metadata: ExifMetadata = serde_json::from_str(json_data).unwrap();
+
+        assert_eq!(metadata.date_time_original, None);
+    }
+
+    #[test]
+    fn test_parse_date_with_no_date() {
+        let json_data = r#"{
+            "SourceFile": "test.jpg",
+            "FileName": "test.jpg",
+            "FileSize": "1"
+        }"#;
+
+        let metadata: ExifMetadata = serde_json::from_str(json_data).unwrap();
+
+        assert_eq!(metadata.date_time_original, None);
+    }
+
+    #[test]
+    fn create_exif_file_from_input_file() {
+        let input_file = InputFile::new(
+            &FilePath::new(Path::new("path/to/file.jpg")),
+            Path::new("path"),
+        );
+
+        let exif_file = ExifFile::from(&input_file);
+
+        assert_eq!(exif_file.src, input_file.src);
+        assert_eq!(exif_file.src_relative, input_file.src_relative);
+        assert_eq!(exif_file.stem, input_file.stem);
+        assert_eq!(exif_file.ext, input_file.ext);
+        assert_eq!(exif_file.file_type, input_file.file_type);
+        assert_eq!(exif_file.metadata, None);
+    }
+
+    #[test]
+    fn next_file_stem_from_exif_file_with_date_time_original() {
+        let metadata = ExifMetadata {
+            date_time_original: Some(
+                chrono::NaiveDateTime::parse_from_str("2021:10:10 12:34:56", "%Y:%m:%d %H:%M:%S")
+                    .unwrap(),
+            ),
+            ..Default::default()
+        };
+
+        let exif_file = ExifFile::new(
+            &InputFile::new(
+                &FilePath::new(Path::new("path/to/file.jpg")),
+                Path::new("path"),
+            ),
+            metadata,
+        );
+
+        assert_eq!(
+            exif_file.next_file_stem(),
+            Some("2021-10-10_12.34.56".to_string())
+        );
+    }
+
+    #[test]
+    fn next_file_stem_from_exif_file_with_creation_date() {
+        let metadata = ExifMetadata {
+            creation_date: Some(
+                chrono::NaiveDateTime::parse_from_str("2021:10:10 12:34:56", "%Y:%m:%d %H:%M:%S")
+                    .unwrap(),
+            ),
+            ..Default::default()
+        };
+
+        let exif_file = ExifFile::new(
+            &InputFile::new(
+                &FilePath::new(Path::new("path/to/file.jpg")),
+                Path::new("path"),
+            ),
+            metadata,
+        );
+
+        assert_eq!(
+            exif_file.next_file_stem(),
+            Some("2021-10-10_12.34.56".to_string())
+        );
+    }
+
+    #[test]
+    fn next_file_name_from_exif_file() {
+        let metadata = ExifMetadata {
+            creation_date: Some(
+                chrono::NaiveDateTime::parse_from_str("2021:10:10 12:34:56", "%Y:%m:%d %H:%M:%S")
+                    .unwrap(),
+            ),
+            ..Default::default()
+        };
+
+        let exif_file = ExifFile::new(
+            &InputFile::new(
+                &FilePath::new(Path::new("path/to/file.jpg")),
+                Path::new("path"),
+            ),
+            metadata,
+        );
+
+        assert_eq!(
+            exif_file.next_file_name(),
+            Some("2021-10-10_12.34.56.jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn group_same_name_files_one_image() {
+        let input_files = vec![InputFile::new(
+            &FilePath::new(Path::new("path/to/file.jpg")),
+            Path::new("path"),
+        )];
+
+        let groups = group_same_name_files(&input_files);
+
+        assert_eq!(groups.len(), 1);
+
+        match &groups[0] {
+            FileNameGroup::Image { image, config } => {
+                assert_eq!(image.ext.value(), "jpg");
+                assert_eq!(config.len(), 0);
+            }
+            _ => panic!("Unexpected group type"),
+        }
+    }
+
+    #[test]
+    fn group_same_name_files_one_image_and_config_files() {
+        let input_files = vec![
+            InputFile::new(
+                &FilePath::new(Path::new("path/to/file.jpg")),
+                Path::new("path"),
+            ),
+            InputFile::new(
+                &FilePath::new(Path::new("path/to/file.xml")),
+                Path::new("path"),
+            ),
+            InputFile::new(
+                &FilePath::new(Path::new("path/to/file.aea")),
+                Path::new("path"),
+            ),
+        ];
+
+        let groups = group_same_name_files(&input_files);
+
+        assert_eq!(groups.len(), 1);
+
+        match &groups[0] {
+            FileNameGroup::Image { image, config } => {
+                assert_eq!(image.ext.value(), "jpg");
+                assert_eq!(config.len(), 2);
+            }
+            _ => panic!("Unexpected group type"),
+        }
+    }
+
+    #[test]
+    fn group_same_name_files_one_video() {
+        let input_files = vec![InputFile::new(
+            &FilePath::new(Path::new("path/to/file.mov")),
+            Path::new("path"),
+        )];
+
+        let groups = group_same_name_files(&input_files);
+
+        assert_eq!(groups.len(), 1);
+
+        match &groups[0] {
+            FileNameGroup::Video { video, config } => {
+                assert_eq!(video.ext.value(), "mov");
+                assert_eq!(config.len(), 0);
+            }
+            _ => panic!("Unexpected group type"),
+        }
+    }
+
+    #[test]
+    fn group_same_name_files_one_video_and_config_files() {
+        let input_files = vec![
+            InputFile::new(
+                &FilePath::new(Path::new("path/to/file.xml")),
+                Path::new("path"),
+            ),
+            InputFile::new(
+                &FilePath::new(Path::new("path/to/file.mov")),
+                Path::new("path"),
+            ),
+        ];
+
+        let groups = group_same_name_files(&input_files);
+
+        assert_eq!(groups.len(), 1);
+
+        match &groups[0] {
+            FileNameGroup::Video { video, config } => {
+                assert_eq!(video.ext.value(), "mov");
+                assert_eq!(config.len(), 1);
+            }
+            _ => panic!("Unexpected group type"),
+        }
+    }
+
+    #[test]
+    fn group_same_name_files_no_media() {
+        let input_files = vec![
+            InputFile::new(
+                &FilePath::new(Path::new("path/to/file.aea")),
+                Path::new("path"),
+            ),
+            InputFile::new(
+                &FilePath::new(Path::new("path/to/file.xml")),
+                Path::new("path"),
+            ),
+        ];
+
+        let groups = group_same_name_files(&input_files);
+
+        assert_eq!(groups.len(), 1);
+
+        match &groups[0] {
+            FileNameGroup::Uncertain(config) => {
+                assert_eq!(config.len(), 2);
+            }
+            _ => panic!("Unexpected group type"),
+        }
+    }
+
+    #[test]
+    fn group_same_name_files_live_photo_with_video() {
+        let input_files = vec![
+            InputFile::new(
+                &FilePath::new(Path::new("path/to/file.jpg")),
+                Path::new("path"),
+            ),
+            InputFile::new(
+                &FilePath::new(Path::new("path/to/file.mov")),
+                Path::new("path"),
+            ),
+        ];
+
+        let groups = group_same_name_files(&input_files);
+
+        assert_eq!(groups.len(), 1);
+
+        match &groups[0] {
+            FileNameGroup::LiveImage {
+                image,
+                video,
+                config,
+            } => {
+                assert_eq!(image.ext.value(), "jpg");
+                assert_eq!(video.ext.value(), "mov");
+                assert_eq!(config.len(), 0);
+            }
+            _ => panic!("Unexpected group type"),
+        }
+    }
+
+    // TODO: Bring this back and figure out how to order the enums in a vec.
+    // #[test]
+    // fn group_same_name_files_multiple_groups() {
+    //     let input_files = vec![
+    //         InputFile::new(
+    //             &FilePath::new(Path::new("path/to/file.jpg")),
+    //             Path::new("path"),
+    //         ),
+    //         InputFile::new(
+    //             &FilePath::new(Path::new("path/to/file.xml")),
+    //             Path::new("path"),
+    //         ),
+    //         InputFile::new(
+    //             &FilePath::new(Path::new("path/to/file2.jpg")),
+    //             Path::new("path"),
+    //         ),
+    //         InputFile::new(
+    //             &FilePath::new(Path::new("path/to/file3.mov")),
+    //             Path::new("path"),
+    //         ),
+    //     ];
+    //
+    //      // TODO: we need to order it to make sure the order does not change.
+    //     let mut groups = group_same_name_files(&input_files);
+    //
+    //     for i in groups.iter() {
+    //         println!("groups {:?}", i);
+    //         println!("");
+    //     }
+    //
+    //     assert_eq!(groups.len(), 3);
+    //
+    //     match &groups[0] {
+    //         FileNameGroup::Image { image, config } => {
+    //             assert_eq!(image.ext.value(), "jpg");
+    //             assert_eq!(config.len(), 1);
+    //         }
+    //         _ => panic!("Unexpected group type"),
+    //     }
+    //
+    //     match &groups[1] {
+    //         FileNameGroup::Image { image, config } => {
+    //             assert_eq!(image.ext.value(), "jpg");
+    //             assert_eq!(config.len(), 0);
+    //         }
+    //         _ => panic!("Unexpected group type"),
+    //     }
+    //
+    //     match &groups[2] {
+    //         FileNameGroup::Video { video, config } => {
+    //             assert_eq!(video.ext.value(), "mov");
+    //             assert_eq!(config.len(), 0);
+    //         }
+    //         _ => panic!("Unexpected group type"),
+    //     }
+    // }
 }
