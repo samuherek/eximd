@@ -1,5 +1,5 @@
 use super::super::config::RunType;
-use core::exif;
+use core::exif::{self, ExifNotifier, FileNameGroup};
 use core::file::{FilePath, InputFile};
 use core::utils;
 use std::path::Path;
@@ -12,7 +12,7 @@ impl ConsoleNotifier {
     }
 }
 
-impl exif::ExifNotifier for ConsoleNotifier {
+impl ExifNotifier for ConsoleNotifier {
     fn rename_success(&self, prev: &FilePath, next: &Path) -> () {
         println!("{} -> {}", prev.as_str(), utils::path_to_string(next));
     }
@@ -41,11 +41,35 @@ impl exif::ExifNotifier for ConsoleNotifier {
     }
 }
 
-pub fn process_files(files: &[InputFile]) {
+pub fn process_files<F: core::config::FileSystem>(fs: &F, files: &[InputFile]) {
     let cmd_path = "exiftool";
     let nf = ConsoleNotifier::new();
     for mut group in exif::group_same_name_files(files) {
-        exif::fetch_and_set_form_group(&nf, &cmd_path, &mut group);
+        match &mut group {
+            FileNameGroup::Image { image, .. } => {
+                image.fetch_and_set_metadata(&cmd_path);
+                if let Some(next_src) = image.next_file_src() {
+                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_src);
+                }
+            }
+            FileNameGroup::Video { video, .. } => {
+                video.fetch_and_set_metadata(&cmd_path);
+                if let Some(next_src) = video.next_file_src() {
+                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_src);
+                }
+            }
+            FileNameGroup::LiveImage { image, .. } => {
+                image.fetch_and_set_metadata(&cmd_path);
+                if let Some(next_src) = image.next_file_src() {
+                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_src);
+                }
+            }
+            FileNameGroup::Uncertain(list) => {
+                for item in list {
+                    nf.uncertain(&item.src)
+                }
+            }
+        }
     }
 }
 

@@ -1,11 +1,11 @@
+use super::config::FileSystem;
 use super::file::{FileExt, FilePath, FileStem, FileType, InputFile};
 use super::utils;
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 // "GPSLatitude": "53 deg 12' 16.92\" N",
@@ -380,12 +380,17 @@ pub trait ExifNotifier {
     fn uncertain(&self, src: &FilePath) -> ();
 }
 
-fn rename_with_rollback<N: ExifNotifier>(nf: &N, items: Vec<&ExifFile>, next_src: &Path) {
+pub fn rename_with_rollback<F: FileSystem, N: ExifNotifier>(
+    fs: &F,
+    nf: &N,
+    items: Vec<&ExifFile>,
+    next_src: &Path,
+) {
     let mut processed = vec![];
     let mut needs_rollback = false;
     for file in items {
         if !needs_rollback {
-            match std::fs::rename(&file.src.value(), next_src) {
+            match fs.rename(&file.src.value(), next_src) {
                 Ok(_) => {
                     nf.rename_success(&file.src, next_src);
                     processed.push((&file.src, next_src));
@@ -400,52 +405,13 @@ fn rename_with_rollback<N: ExifNotifier>(nf: &N, items: Vec<&ExifFile>, next_src
 
     if needs_rollback {
         for file in processed {
-            match std::fs::rename(file.1, file.0.value()) {
+            match fs.rename(file.1, file.0.value()) {
                 Ok(_) => {
                     nf.rollback_success(file.1, file.0);
                 }
                 Err(err) => {
                     nf.rollback_error(&file.1, err.to_string());
-                    // eprintln!(
-                    //     "ERROR: rolling back the {}: {}",
-                    //     utils::path_to_string(),
-                    //     err
-                    // )
                 }
-            }
-        }
-    }
-}
-
-// TODO: tests
-pub fn fetch_and_set_form_group<N: ExifNotifier>(
-    nf: &N,
-    cmd_path: &str,
-    group: &mut FileNameGroup,
-) {
-    match group {
-        FileNameGroup::Image { image, .. } => {
-            image.fetch_and_set_metadata(&cmd_path);
-            if let Some(next_src) = image.next_file_src() {
-                rename_with_rollback(nf, group.merge_into_refs(), &next_src);
-            }
-        }
-        FileNameGroup::Video { video, .. } => {
-            video.fetch_and_set_metadata(&cmd_path);
-            if let Some(next_src) = video.next_file_src() {
-                rename_with_rollback(nf, group.merge_into_refs(), &next_src);
-            }
-        }
-        FileNameGroup::LiveImage { image, .. } => {
-            image.fetch_and_set_metadata(&cmd_path);
-            if let Some(next_src) = image.next_file_src() {
-                rename_with_rollback(nf, group.merge_into_refs(), &next_src);
-            }
-        }
-        FileNameGroup::Uncertain(list) => {
-            for item in list {
-                nf.uncertain(&item.src)
-                // println!("{} -> Uncertain Primary file", item.src.as_str());
             }
         }
     }
