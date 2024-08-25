@@ -114,7 +114,9 @@ impl ExifFile {
         }
     }
 
-    pub fn next_file_stem(&self) -> Option<String> {
+    // TODO: These methods are kind of a mess. We need to look into it
+    // again and see if we can clean it up in a more logical form.
+    pub fn next_file_stem_from_exif(&self) -> Option<String> {
         // TODO: Parametize the format of the date
         self.metadata
             .as_ref()
@@ -126,14 +128,20 @@ impl ExifFile {
             .flatten()
     }
 
-    fn next_file_name(&self) -> Option<String> {
-        self.next_file_stem()
+    pub fn next_file_name(&self) -> Option<String> {
+        self.next_file_stem_from_exif()
             .map(|x| format!("{}.{}", x, self.ext.value()))
     }
 
-    pub fn next_file_src(&self) -> Option<PathBuf> {
+    pub fn next_file_src_from_exif(&self) -> Option<PathBuf> {
         self.next_file_name()
             .map(|name| self.src.with_file_name(name))
+    }
+
+    pub fn next_file_src_with_stem_name(&self, next_stem: &str) -> PathBuf {
+        self.src
+            .value()
+            .with_file_name(format!("{}.{}", next_stem, self.ext.value()))
     }
 
     pub fn fetch_and_set_metadata(&mut self, cmd_path: &str) -> &Self {
@@ -384,17 +392,16 @@ pub fn rename_with_rollback<F: FileSystem, N: ExifNotifier>(
     fs: &F,
     nf: &N,
     items: Vec<&ExifFile>,
-    // TODO:::::::: BUGGGGG> NOT A NEXT_SRC BUT A NEXT STEM AND BUILD THE PATH HERE!!!!!!!
-    // otherwise it took the extensions from the original file and applied it to all files.
-    next_src: &Path,
+    next_stem: &str,
 ) {
     let mut processed = vec![];
     let mut needs_rollback = false;
     for file in items {
         if !needs_rollback {
-            match fs.rename(&file.src.value(), next_src) {
+            let next_src = file.next_file_src_with_stem_name(next_stem);
+            match fs.rename(&file.src.value(), &next_src) {
                 Ok(_) => {
-                    nf.rename_success(&file.src, next_src);
+                    nf.rename_success(&file.src, &next_src);
                     processed.push((&file.src, next_src));
                 }
                 Err(err) => {
@@ -407,9 +414,9 @@ pub fn rename_with_rollback<F: FileSystem, N: ExifNotifier>(
 
     if needs_rollback {
         for file in processed {
-            match fs.rename(file.1, file.0.value()) {
+            match fs.rename(&file.1, file.0.value()) {
                 Ok(_) => {
-                    nf.rollback_success(file.1, file.0);
+                    nf.rollback_success(&file.1, file.0);
                 }
                 Err(err) => {
                     nf.rollback_error(&file.1, err.to_string());
@@ -421,9 +428,13 @@ pub fn rename_with_rollback<F: FileSystem, N: ExifNotifier>(
 
 #[cfg(test)]
 mod test {
+    use super::super::config::MockFileSystem;
     use super::*;
+    use chrono::NaiveDateTime;
     use serde_json;
     use std::path::Path;
+
+    const DATE_FORMAT: &'static str = "%Y:%m:%d %H:%M:%S";
 
     #[test]
     fn test_parse_date_with_date_and_time() {
@@ -438,10 +449,7 @@ mod test {
 
         assert_eq!(
             metadata.date_time_original,
-            Some(
-                chrono::NaiveDateTime::parse_from_str("2021:10:10 12:34:56", "%Y:%m:%d %H:%M:%S")
-                    .unwrap()
-            )
+            Some(NaiveDateTime::parse_from_str("2021:10:10 12:34:56", DATE_FORMAT).unwrap())
         );
     }
 
@@ -458,10 +466,7 @@ mod test {
 
         assert_eq!(
             metadata.date_time_original,
-            Some(
-                chrono::NaiveDateTime::parse_from_str("2022:03:17 17:37:48", "%Y:%m:%d %H:%M:%S")
-                    .unwrap()
-            )
+            Some(NaiveDateTime::parse_from_str("2022:03:17 17:37:48", DATE_FORMAT).unwrap())
         );
     }
 
@@ -513,8 +518,7 @@ mod test {
     fn next_file_stem_from_exif_file_with_date_time_original() {
         let metadata = ExifMetadata {
             date_time_original: Some(
-                chrono::NaiveDateTime::parse_from_str("2021:10:10 12:34:56", "%Y:%m:%d %H:%M:%S")
-                    .unwrap(),
+                NaiveDateTime::parse_from_str("2021:10:10 12:34:56", DATE_FORMAT).unwrap(),
             ),
             ..Default::default()
         };
@@ -528,7 +532,7 @@ mod test {
         );
 
         assert_eq!(
-            exif_file.next_file_stem(),
+            exif_file.next_file_stem_from_exif(),
             Some("2021-10-10_12.34.56".to_string())
         );
     }
@@ -537,8 +541,7 @@ mod test {
     fn next_file_stem_from_exif_file_with_creation_date() {
         let metadata = ExifMetadata {
             creation_date: Some(
-                chrono::NaiveDateTime::parse_from_str("2021:10:10 12:34:56", "%Y:%m:%d %H:%M:%S")
-                    .unwrap(),
+                NaiveDateTime::parse_from_str("2021:10:10 12:34:56", DATE_FORMAT).unwrap(),
             ),
             ..Default::default()
         };
@@ -552,7 +555,7 @@ mod test {
         );
 
         assert_eq!(
-            exif_file.next_file_stem(),
+            exif_file.next_file_stem_from_exif(),
             Some("2021-10-10_12.34.56".to_string())
         );
     }
@@ -731,6 +734,133 @@ mod test {
             }
             _ => panic!("Unexpected group type"),
         }
+    }
+
+    struct MockExifNotifer;
+    impl MockExifNotifer {
+        fn new() -> Self {
+            Self {}
+        }
+    }
+    impl ExifNotifier for MockExifNotifer {
+        fn rename_success(&self, _prev: &FilePath, _next: &Path) -> () {}
+        fn rename_error(&self, _prev: &FilePath, _err: String) -> () {}
+        fn rollback_success(&self, _next: &Path, _prev: &FilePath) -> () {}
+        fn rollback_error(&self, _next: &Path, _err: String) -> () {}
+        fn uncertain(&self, _src: &FilePath) -> () {}
+    }
+
+    #[test]
+    fn rename_with_rollback_one_image() {
+        let fs = MockFileSystem::new();
+        let nf = MockExifNotifer::new();
+        let image = ExifFile::new(
+            &InputFile::new(
+                &FilePath::new(Path::new("path/to/file.jpg")),
+                Path::new("path"),
+            ),
+            ExifMetadata {
+                ..Default::default()
+            },
+        );
+        let files = vec![&image];
+        let next_stem = "2021-10-10_12.34.56";
+
+        rename_with_rollback(&fs, &nf, files, &next_stem);
+        let renamed_files = fs.renamed_files.borrow();
+        let first = renamed_files.first().unwrap();
+
+        assert_eq!(renamed_files.len(), 1);
+        assert_eq!(first.0, PathBuf::from("path/to/file.jpg"));
+        assert_eq!(first.1, PathBuf::from("path/to/2021-10-10_12.34.56.jpg"));
+    }
+
+    #[test]
+    fn rename_with_rollback_one_image_with_config_file() {
+        let fs = MockFileSystem::new();
+        let nf = MockExifNotifer::new();
+        let image = ExifFile::new(
+            &InputFile::new(
+                &FilePath::new(Path::new("path/to/file.jpg")),
+                Path::new("path"),
+            ),
+            ExifMetadata {
+                ..Default::default()
+            },
+        );
+        let config = ExifFile::new(
+            &InputFile::new(
+                &FilePath::new(Path::new("path/to/file.xml")),
+                Path::new("path"),
+            ),
+            ExifMetadata {
+                ..Default::default()
+            },
+        );
+
+        let files = vec![&image, &config];
+        let next_stem = "2021-10-10_12.34.56";
+
+        rename_with_rollback(&fs, &nf, files, &next_stem);
+        let renamed_files = fs.renamed_files.borrow();
+        let first = renamed_files.get(0).unwrap();
+        let second = renamed_files.get(1).unwrap();
+
+        assert_eq!(renamed_files.len(), 2);
+        assert_eq!(first.0, PathBuf::from("path/to/file.jpg"));
+        assert_eq!(first.1, PathBuf::from("path/to/2021-10-10_12.34.56.jpg"));
+        assert_eq!(second.0, PathBuf::from("path/to/file.xml"));
+        assert_eq!(second.1, PathBuf::from("path/to/2021-10-10_12.34.56.xml"));
+    }
+
+    #[test]
+    fn rename_with_rollback_one_image_with_config_files() {
+        let fs = MockFileSystem::new();
+        let nf = MockExifNotifer::new();
+        let image = ExifFile::new(
+            &InputFile::new(
+                &FilePath::new(Path::new("path/to/file.jpg")),
+                Path::new("path"),
+            ),
+            ExifMetadata {
+                ..Default::default()
+            },
+        );
+        let config1 = ExifFile::new(
+            &InputFile::new(
+                &FilePath::new(Path::new("path/to/file.xml")),
+                Path::new("path"),
+            ),
+            ExifMetadata {
+                ..Default::default()
+            },
+        );
+        let config2 = ExifFile::new(
+            &InputFile::new(
+                &FilePath::new(Path::new("path/to/file.aae")),
+                Path::new("path"),
+            ),
+            ExifMetadata {
+                ..Default::default()
+            },
+        );
+
+        let files = vec![&image, &config1, &config2];
+        let next_stem = "2021-10-10_12.34.56";
+
+        rename_with_rollback(&fs, &nf, files, &next_stem);
+        let renamed_files = fs.renamed_files.borrow();
+        let first = renamed_files.get(0).unwrap();
+        let second = renamed_files.get(1).unwrap();
+        let third = renamed_files.get(2).unwrap();
+
+        assert_eq!(renamed_files.len(), 3);
+        assert_eq!(first.0, PathBuf::from("path/to/file.jpg"));
+        assert_eq!(first.1, PathBuf::from("path/to/2021-10-10_12.34.56.jpg"));
+        assert_eq!(second.0, PathBuf::from("path/to/file.xml"));
+        assert_eq!(second.1, PathBuf::from("path/to/2021-10-10_12.34.56.xml"));
+        assert_eq!(third.0, PathBuf::from("path/to/file.aae"));
+        assert_eq!(third.1, PathBuf::from("path/to/2021-10-10_12.34.56.aae"));
     }
 
     // TODO: Bring this back and figure out how to order the enums in a vec.

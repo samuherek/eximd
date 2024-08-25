@@ -48,20 +48,20 @@ pub fn process_files<F: core::config::FileSystem>(fs: &F, files: &[InputFile]) {
         match &mut group {
             FileNameGroup::Image { image, .. } => {
                 image.fetch_and_set_metadata(&cmd_path);
-                if let Some(next_src) = image.next_file_src() {
-                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_src);
+                if let Some(next_stem) = image.next_file_stem_from_exif() {
+                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_stem);
                 }
             }
             FileNameGroup::Video { video, .. } => {
                 video.fetch_and_set_metadata(&cmd_path);
-                if let Some(next_src) = video.next_file_src() {
-                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_src);
+                if let Some(next_stem) = video.next_file_stem_from_exif() {
+                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_stem);
                 }
             }
             FileNameGroup::LiveImage { image, .. } => {
                 image.fetch_and_set_metadata(&cmd_path);
-                if let Some(next_src) = image.next_file_src() {
-                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_src);
+                if let Some(next_stem) = image.next_file_stem_from_exif() {
+                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_stem);
                 }
             }
             FileNameGroup::Uncertain(list) => {

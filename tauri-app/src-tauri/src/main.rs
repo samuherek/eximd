@@ -138,7 +138,13 @@ struct DropInputPayload {
 struct ExifFileData {
     idx: usize,
     src: PathBuf,
-    next_src: PathBuf,
+    src_next: PathBuf,
+    stem_next: String,
+}
+
+#[derive(Debug, serde::Serialize, Clone)]
+struct ExifFileUncertain {
+    src: PathBuf,
 }
 
 #[tauri::command]
@@ -162,7 +168,7 @@ fn start_exif_collection(
             match &mut group {
                 FileNameGroup::Image { image, .. } => {
                     image.fetch_and_set_metadata(&cmd_path);
-                    if let Some(next_src) = image.next_file_src() {
+                    if let Some(next_src) = image.next_file_src_from_exif() {
                         // let mut file_group = state.file_group.lock().unwrap();
                         // *file_group[i].image = image.clone();
                         window
@@ -171,7 +177,10 @@ fn start_exif_collection(
                                 ExifFileData {
                                     idx: i,
                                     src: image.src.value().to_owned(),
-                                    next_src: next_src.clone(),
+                                    src_next: next_src.clone(),
+                                    stem_next: image
+                                        .next_file_stem_from_exif()
+                                        .unwrap_or("ERROR".to_string()),
                                 },
                             )
                             .expect("send message to the FE");
@@ -180,7 +189,7 @@ fn start_exif_collection(
                 }
                 FileNameGroup::Video { video, .. } => {
                     video.fetch_and_set_metadata(&cmd_path);
-                    if let Some(next_src) = video.next_file_src() {
+                    if let Some(next_src) = video.next_file_src_from_exif() {
                         // rename_with_rollback(nf, group.merge_into_refs(), &next_src);
                         window
                             .emit(
@@ -188,7 +197,10 @@ fn start_exif_collection(
                                 ExifFileData {
                                     idx: i,
                                     src: video.src.value().to_owned(),
-                                    next_src: next_src.clone(),
+                                    src_next: next_src.clone(),
+                                    stem_next: video
+                                        .next_file_stem_from_exif()
+                                        .unwrap_or("ERROR".to_string()),
                                 },
                             )
                             .expect("send message to the FE");
@@ -196,7 +208,7 @@ fn start_exif_collection(
                 }
                 FileNameGroup::LiveImage { image, .. } => {
                     image.fetch_and_set_metadata(&cmd_path);
-                    if let Some(next_src) = image.next_file_src() {
+                    if let Some(next_src) = image.next_file_src_from_exif() {
                         // rename_with_rollback(nf, group.merge_into_refs(), &next_src);
                         window
                             .emit(
@@ -204,30 +216,22 @@ fn start_exif_collection(
                                 ExifFileData {
                                     idx: i,
                                     src: image.src.value().to_owned(),
-                                    next_src: next_src.clone(),
+                                    src_next: next_src.clone(),
+                                    stem_next: image
+                                        .next_file_stem_from_exif()
+                                        .unwrap_or("ERROR".to_string()),
                                 },
                             )
                             .expect("send message to the FE");
                     }
                 }
-                FileNameGroup::Uncertain(list) => {
-                    for item in list {
-                        // nf.uncertain(&item.src)
-                    }
-                }
+                FileNameGroup::Uncertain(_) => {}
             }
-            // 1. get the exif file from input -> no renaming yet.
-            // 2. updat the state lock
-            // 3. send the message to the FE
-
-            // if let Some(image) = &file_group.image {
-            //     let data = get_exif_file_from_input(&cmd_path, image);
-            //     println!("processsed {:?}", data);
-            //     window
-            //         .emit("EXIF_FILE_DATA", "")
-            //         .expect("to emit event to the FE");
-            // }
         }
+
+        window
+            .emit("EXIF_COLLECTION_DONE", "")
+            .expect("send message to FE");
     });
 
     Ok(())
