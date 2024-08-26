@@ -94,6 +94,7 @@ where
 
 #[derive(Debug, Clone)]
 pub struct ExifFile {
+    pub group_key: String,
     pub src: FilePath,
     pub src_relative: FilePath,
     pub stem: FileStem,
@@ -105,6 +106,7 @@ pub struct ExifFile {
 impl ExifFile {
     fn new(file: &InputFile, info: ExifMetadata) -> Self {
         Self {
+            group_key: file.hash_key(),
             src: file.src.clone(),
             src_relative: file.src_relative.clone(),
             stem: file.stem.clone(),
@@ -148,11 +150,16 @@ impl ExifFile {
         self.metadata = get_exif_metadata_from_cmd(cmd_path, &self.src);
         self
     }
+
+    pub fn get_key(&self) -> String {
+        self.stem.value().into()
+    }
 }
 
 impl From<InputFile> for ExifFile {
     fn from(file: InputFile) -> Self {
         Self {
+            group_key: file.hash_key(),
             src: file.src,
             src_relative: file.src_relative,
             stem: file.stem,
@@ -166,6 +173,7 @@ impl From<InputFile> for ExifFile {
 impl From<&InputFile> for ExifFile {
     fn from(file: &InputFile) -> Self {
         Self {
+            group_key: file.hash_key(),
             src: file.src.clone(),
             src_relative: file.src_relative.clone(),
             stem: file.stem.clone(),
@@ -251,43 +259,59 @@ pub fn get_exif_file_from_input(cmd_path: &str, item: &InputFile) -> ExifFile {
 #[derive(Debug, Clone)]
 pub enum FileNameGroup {
     Image {
+        key: String,
         image: ExifFile,
         config: Vec<ExifFile>,
     },
     LiveImage {
+        key: String,
         image: ExifFile,
         video: ExifFile,
         config: Vec<ExifFile>,
     },
     Video {
+        key: String,
         video: ExifFile,
         config: Vec<ExifFile>,
     },
-    Uncertain(Vec<ExifFile>),
+    Uncertain {
+        key: String,
+        primary: Vec<ExifFile>,
+        config: Vec<ExifFile>,
+    },
+    Unsupported {
+        key: String,
+        config: Vec<ExifFile>,
+    },
 }
 
 impl FileNameGroup {
-    pub fn merge_into_refs(&self) -> Vec<&ExifFile> {
+    // This method is used to get all the file paths
+    // so that we can do the renaming of each file.
+    pub fn merge_into_rename_refs(&self) -> Vec<&ExifFile> {
         let mut merged = Vec::new();
         match self {
-            Self::Image { image, config } => {
+            Self::Image { image, config, .. } => {
                 merged.push(image);
-                merged.extend(config.iter())
+                merged.extend(config.iter());
             }
             Self::LiveImage {
                 image,
                 config,
                 video,
+                ..
             } => {
                 merged.push(image);
                 merged.push(video);
-                merged.extend(config.iter())
+                merged.extend(config.iter());
             }
-            Self::Video { video, config } => {
+            Self::Video { video, config, .. } => {
                 merged.push(video);
-                merged.extend(config.iter())
+                merged.extend(config.iter());
             }
-            Self::Uncertain(items) => merged.extend(items.iter()),
+            _ => {
+                // We do nothing, here, because we don't know how to rename
+            }
         }
         merged
     }
@@ -312,7 +336,7 @@ pub fn group_same_name_files(files: &[InputFile]) -> Vec<FileNameGroup> {
     // TODO: We have a couple of clones in the code below. There must be a way to
     // do it without cloning. Maybe I don't understand the exact working of the
     // rust manipulations.
-    for (_, (primary_files, config_files)) in groups {
+    for (key, (primary_files, config_files)) in groups {
         match primary_files.len() {
             1 => {
                 // 1. if we have a media vector length of exactly 1:
@@ -321,11 +345,13 @@ pub fn group_same_name_files(files: &[InputFile]) -> Vec<FileNameGroup> {
                 let next = match primary_file.file_type {
                     //  - then: if it is an image -> Image
                     FileType::IMG => FileNameGroup::Image {
+                        key,
                         image: primary_file.clone(),
                         config: config_files,
                     },
                     //  - then: if it is a video -> Video
                     FileType::VIDEO => FileNameGroup::Video {
+                        key,
                         video: primary_file.clone(),
                         config: config_files,
                     },
@@ -359,6 +385,7 @@ pub fn group_same_name_files(files: &[InputFile]) -> Vec<FileNameGroup> {
                             }
                         };
                         file_name_groups.push(FileNameGroup::LiveImage {
+                            key,
                             image: image.clone(),
                             video: video.clone(),
                             config: config_files,
@@ -366,22 +393,28 @@ pub fn group_same_name_files(files: &[InputFile]) -> Vec<FileNameGroup> {
                     }
                     //  - otherwise: Uncertainty of all the related files
                     _ => {
-                        let next_files = primary_files
-                            .into_iter()
-                            .chain(config_files.into_iter())
-                            .collect::<Vec<_>>();
-                        file_name_groups.push(FileNameGroup::Uncertain(next_files));
+                        file_name_groups.push(FileNameGroup::Uncertain {
+                            key,
+                            primary: primary_files,
+                            config: config_files,
+                        });
                     }
                 }
             }
             _ => {
                 // 3. if we have a media vector length anything else:
-                //  - then: all files are Uncertainty
-                let next_files = primary_files
-                    .into_iter()
-                    .chain(config_files.into_iter())
-                    .collect::<Vec<_>>();
-                file_name_groups.push(FileNameGroup::Uncertain(next_files));
+                if primary_files.len() > 0 {
+                    file_name_groups.push(FileNameGroup::Uncertain {
+                        key,
+                        primary: primary_files,
+                        config: config_files,
+                    });
+                } else {
+                    file_name_groups.push(FileNameGroup::Unsupported {
+                        key,
+                        config: config_files,
+                    });
+                }
             }
         }
     }
@@ -395,6 +428,7 @@ pub trait ExifNotifier {
     fn rollback_success(&self, next: &Path, prev: &FilePath) -> ();
     fn rollback_error(&self, next: &Path, err: String) -> ();
     fn uncertain(&self, src: &FilePath) -> ();
+    fn unsupported(&self, src: &FilePath) -> ();
 }
 
 pub fn rename_with_rollback<F: FileSystem, N: ExifNotifier>(
@@ -605,7 +639,8 @@ mod test {
         assert_eq!(groups.len(), 1);
 
         match &groups[0] {
-            FileNameGroup::Image { image, config } => {
+            FileNameGroup::Image { key, image, config } => {
+                assert_eq!(key, "file");
                 assert_eq!(image.ext.value(), "jpg");
                 assert_eq!(config.len(), 0);
             }
@@ -635,7 +670,8 @@ mod test {
         assert_eq!(groups.len(), 1);
 
         match &groups[0] {
-            FileNameGroup::Image { image, config } => {
+            FileNameGroup::Image { key, image, config } => {
+                assert_eq!(key, "file");
                 assert_eq!(image.ext.value(), "jpg");
                 assert_eq!(config.len(), 2);
             }
@@ -655,7 +691,8 @@ mod test {
         assert_eq!(groups.len(), 1);
 
         match &groups[0] {
-            FileNameGroup::Video { video, config } => {
+            FileNameGroup::Video { key, video, config } => {
+                assert_eq!(key, "file");
                 assert_eq!(video.ext.value(), "mov");
                 assert_eq!(config.len(), 0);
             }
@@ -681,7 +718,8 @@ mod test {
         assert_eq!(groups.len(), 1);
 
         match &groups[0] {
-            FileNameGroup::Video { video, config } => {
+            FileNameGroup::Video { key, video, config } => {
+                assert_eq!(key, "file");
                 assert_eq!(video.ext.value(), "mov");
                 assert_eq!(config.len(), 1);
             }
@@ -707,7 +745,8 @@ mod test {
         assert_eq!(groups.len(), 1);
 
         match &groups[0] {
-            FileNameGroup::Uncertain(config) => {
+            FileNameGroup::Unsupported { key, config } => {
+                assert_eq!(key, "file");
                 assert_eq!(config.len(), 2);
             }
             _ => panic!("Unexpected group type"),
@@ -733,10 +772,12 @@ mod test {
 
         match &groups[0] {
             FileNameGroup::LiveImage {
+                key,
                 image,
                 video,
                 config,
             } => {
+                assert_eq!(key, "file");
                 assert_eq!(image.ext.value(), "jpg");
                 assert_eq!(video.ext.value(), "mov");
                 assert_eq!(config.len(), 0);
@@ -757,6 +798,7 @@ mod test {
         fn rollback_success(&self, _next: &Path, _prev: &FilePath) -> () {}
         fn rollback_error(&self, _next: &Path, _err: String) -> () {}
         fn uncertain(&self, _src: &FilePath) -> () {}
+        fn unsupported(&self, _src: &FilePath) -> () {}
     }
 
     #[test]

@@ -105,7 +105,7 @@ function App() {
             <div className="grid grid-cols-3 items-center mb-8">
                 <div>
                 </div>
-                <h1 className="text-3xl text-black dark:text-white ">ExiMd</h1>
+                <h1 className="text-3xl text-black dark:text-white text-center">ExiMd</h1>
                 <div className="flex justify-end">
                 </div>
             </div>

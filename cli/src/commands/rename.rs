@@ -39,6 +39,10 @@ impl ExifNotifier for ConsoleNotifier {
     fn uncertain(&self, src: &FilePath) -> () {
         println!("{} -> Uncertain Primary file", src.as_str());
     }
+
+    fn unsupported(&self, src: &FilePath) -> () {
+        println!("{} -> Unsupported file", src.as_str());
+    }
 }
 
 pub fn process_files<F: core::config::FileSystem>(fs: &F, files: &[InputFile]) {
@@ -49,24 +53,30 @@ pub fn process_files<F: core::config::FileSystem>(fs: &F, files: &[InputFile]) {
             FileNameGroup::Image { image, .. } => {
                 image.fetch_and_set_metadata(&cmd_path);
                 if let Some(next_stem) = image.next_file_stem_from_exif() {
-                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_stem);
+                    exif::rename_with_rollback(fs, &nf, group.merge_into_rename_refs(), &next_stem);
                 }
             }
             FileNameGroup::Video { video, .. } => {
                 video.fetch_and_set_metadata(&cmd_path);
                 if let Some(next_stem) = video.next_file_stem_from_exif() {
-                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_stem);
+                    exif::rename_with_rollback(fs, &nf, group.merge_into_rename_refs(), &next_stem);
                 }
             }
             FileNameGroup::LiveImage { image, .. } => {
                 image.fetch_and_set_metadata(&cmd_path);
                 if let Some(next_stem) = image.next_file_stem_from_exif() {
-                    exif::rename_with_rollback(fs, &nf, group.merge_into_refs(), &next_stem);
+                    exif::rename_with_rollback(fs, &nf, group.merge_into_rename_refs(), &next_stem);
                 }
             }
-            FileNameGroup::Uncertain(list) => {
-                for item in list {
+            FileNameGroup::Uncertain { primary, config, .. } => {
+                let values = primary.iter().chain(config.iter()).collect::<Vec<_>>();
+                for item in values {
                     nf.uncertain(&item.src)
+                }
+            }
+            FileNameGroup::Unsupported { config, .. } => {
+                for item in config {
+                    nf.unsupported(&item.src)
                 }
             }
         }
