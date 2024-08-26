@@ -308,72 +308,81 @@ pub fn group_same_name_files(files: &[InputFile]) -> Vec<FileNameGroup> {
     }
 
     let mut file_name_groups = Vec::new();
-    for (_, (prim, sec)) in groups {
-        let prim_len = prim.len();
-        let sec_len = sec.len();
 
-        // TODO: Update logic for this:
-        // We assume that every photo might have a live photo.
-        // If we have a photo, we try to find the corresponding live video.
-        // If there is more videos we do the uncertainty stuff.
-        // Otherwise, we create a live photo out of this.
-
-        // 1. In case we have more primary files with a possible date
-        // and we have some secondary files as well, we don't konw
-        // which "date_name" to choose. So we return uncertain.
-        if prim_len > 1 && sec_len > 0 {
-            let next_files = prim.into_iter().chain(sec.into_iter()).collect::<Vec<_>>();
-            file_name_groups.push(FileNameGroup::Uncertain(next_files));
-
-            // TODO: At this point, we might have a photo, that is also a live photo
-            // that also has some config files. So we need to keep this togehter,
-            // and ask the user to resolve the file name origin.
-
-            // 2. we have only primary files and then we simple convert them
-            // based on the extension and push to the vec.
-        } else if prim_len > 0 && sec_len == 0 {
-            // TODO: we should handle the live photo here....
-            for file in prim {
-                let next = match file.file_type {
+    // TODO: We have a couple of clones in the code below. There must be a way to
+    // do it without cloning. Maybe I don't understand the exact working of the
+    // rust manipulations.
+    for (_, (primary_files, config_files)) in groups {
+        match primary_files.len() {
+            1 => {
+                // 1. if we have a media vector length of exactly 1:
+                assert_eq!(primary_files.len(), 1);
+                let primary_file = &primary_files[0];
+                let next = match primary_file.file_type {
+                    //  - then: if it is an image -> Image
                     FileType::IMG => FileNameGroup::Image {
-                        image: file,
-                        config: Vec::new(),
+                        image: primary_file.clone(),
+                        config: config_files,
                     },
+                    //  - then: if it is a video -> Video
                     FileType::VIDEO => FileNameGroup::Video {
-                        video: file,
-                        config: Vec::new(),
+                        video: primary_file.clone(),
+                        config: config_files,
                     },
-                    _ => FileNameGroup::Uncertain(vec![file]),
+                    _ => {
+                        unreachable!(
+                            "We have found a non primary files in the list of primary files"
+                        );
+                    }
                 };
+
                 file_name_groups.push(next);
             }
-        // 3. If we only have secondary files, we put them in the
-        // uncertain category as we don't know if we want to rename them.
-        } else if prim_len == 0 && sec_len > 0 {
-            file_name_groups.push(FileNameGroup::Uncertain(sec));
-        // 4. we have exactly one prim file and some secondary files which
-        // indicates that it's something like a photo with edits.
-        } else if prim_len == 1 && sec_len > 0 {
-            let prim = prim.get(0).expect("to have the first element").to_owned();
-            let next = match prim.file_type {
-                FileType::IMG => FileNameGroup::Image {
-                    image: prim,
-                    config: sec,
-                },
-                FileType::VIDEO => FileNameGroup::Video {
-                    video: prim,
-                    config: sec,
-                },
-                _ => {
-                    let mut g = Vec::new();
-                    g.extend(sec);
-                    g.push(prim);
-                    FileNameGroup::Uncertain(g)
+            2 => {
+                // 2. if we have media vector length exactly 2:
+                assert_eq!(primary_files.len(), 2);
+                let [item1, item2] = &primary_files[..] else {
+                    unreachable!(
+                        "We found different number of primary files in a vector. Logic bug"
+                    );
+                };
+                let types = (&item1.file_type, &item2.file_type);
+
+                match types {
+                    //  - then: if we have exactly one image and one video -> LivePhoto
+                    (FileType::IMG, FileType::VIDEO) | (FileType::VIDEO, FileType::IMG) => {
+                        let (image, video) = match types {
+                            (FileType::IMG, FileType::VIDEO) => (item1, item2),
+                            (FileType::VIDEO, FileType::IMG) => (item2, item1),
+                            _ => {
+                                unreachable!("This must be a language error bug. As this should never happen.");
+                            }
+                        };
+                        file_name_groups.push(FileNameGroup::LiveImage {
+                            image: image.clone(),
+                            video: video.clone(),
+                            config: config_files,
+                        });
+                    }
+                    //  - otherwise: Uncertainty of all the related files
+                    _ => {
+                        let next_files = primary_files
+                            .into_iter()
+                            .chain(config_files.into_iter())
+                            .collect::<Vec<_>>();
+                        file_name_groups.push(FileNameGroup::Uncertain(next_files));
+                    }
                 }
-            };
-            file_name_groups.push(next);
-        } else {
-            unreachable!();
+            }
+            _ => {
+                // 3. if we have a media vector length anything else:
+                //  - then: all files are Uncertainty
+                let next_files = primary_files
+                    .into_iter()
+                    .chain(config_files.into_iter())
+                    .collect::<Vec<_>>();
+                file_name_groups.push(FileNameGroup::Uncertain(next_files));
+            }
         }
     }
 
@@ -862,61 +871,4 @@ mod test {
         assert_eq!(third.0, PathBuf::from("path/to/file.aae"));
         assert_eq!(third.1, PathBuf::from("path/to/2021-10-10_12.34.56.aae"));
     }
-
-    // TODO: Bring this back and figure out how to order the enums in a vec.
-    // #[test]
-    // fn group_same_name_files_multiple_groups() {
-    //     let input_files = vec![
-    //         InputFile::new(
-    //             &FilePath::new(Path::new("path/to/file.jpg")),
-    //             Path::new("path"),
-    //         ),
-    //         InputFile::new(
-    //             &FilePath::new(Path::new("path/to/file.xml")),
-    //             Path::new("path"),
-    //         ),
-    //         InputFile::new(
-    //             &FilePath::new(Path::new("path/to/file2.jpg")),
-    //             Path::new("path"),
-    //         ),
-    //         InputFile::new(
-    //             &FilePath::new(Path::new("path/to/file3.mov")),
-    //             Path::new("path"),
-    //         ),
-    //     ];
-    //
-    //      // TODO: we need to order it to make sure the order does not change.
-    //     let mut groups = group_same_name_files(&input_files);
-    //
-    //     for i in groups.iter() {
-    //         println!("groups {:?}", i);
-    //         println!("");
-    //     }
-    //
-    //     assert_eq!(groups.len(), 3);
-    //
-    //     match &groups[0] {
-    //         FileNameGroup::Image { image, config } => {
-    //             assert_eq!(image.ext.value(), "jpg");
-    //             assert_eq!(config.len(), 1);
-    //         }
-    //         _ => panic!("Unexpected group type"),
-    //     }
-    //
-    //     match &groups[1] {
-    //         FileNameGroup::Image { image, config } => {
-    //             assert_eq!(image.ext.value(), "jpg");
-    //             assert_eq!(config.len(), 0);
-    //         }
-    //         _ => panic!("Unexpected group type"),
-    //     }
-    //
-    //     match &groups[2] {
-    //         FileNameGroup::Video { video, config } => {
-    //             assert_eq!(video.ext.value(), "mov");
-    //             assert_eq!(config.len(), 0);
-    //         }
-    //         _ => panic!("Unexpected group type"),
-    //     }
-    // }
 }
