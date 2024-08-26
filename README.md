@@ -2,50 +2,53 @@
 
 # ExiMd
 
-![eximd](https://github.com/user-attachments/assets/cca8b788-4d2f-4e43-84e2-4096642bfbb6)
-
-Eeasily rename your media into a timestamp file names.
+> Simple an effective sanitizer of your media file names even when it's a live photo or it has extra edit files with it. 
 
 
-
-https://github.com/user-attachments/assets/fc3514c6-7ba5-4187-8714-026f4935b7e4
-
+https://github.com/user-attachments/assets/3b496e4f-d95a-4bc4-bc98-0e2f7534afd1
 
 
 </div>
 
 ---
 
-## Overview
+**!!!! This is still WIP but soon to be released !!!!**
 
-This is a simple application that would rename your media files from the usual camera file names like `IMG_87878.JPGz` to a more managable name similar to how dropbox backups the photos. 
-The new name will be of the format `YYYY-MM-DD_HH.MM.SS.ext`.
 
-The purpose of this is to easily manage your files. As it's very often that if you move the file to a new storage or make some edits,
-the exif timestamp can be overwritten. But mainly, having the standard file names mean you can have duplicates and it's harded to manage. 
+## Why this exists and what it does
 
-This app also taks into account extra files like the edit files from apple or adobe (`xpm`, `aae`) and makes sure that it will 
-have the same "name" as the original media that actually has the timestamp. This way, your edits will still be stored alongside of the files. 
-The same should be the case for the live photos as the video and the photo will end up having the same file name.
+**My problem is summed up as. I would like to:**
 
-This has been a big pain for me personally, and thus this little app. 
+- rename my pictures the way "dropbox" backup did it. Format: `YY-MM-DD HH.MM.SS`
+- do this even for older photos that have been moved around on hard disks a bit and have different "creation dates"
+- the tool to rename **related** files too and not forget about them:
+    - Apple's live photo,
+    - Adobe lightroom metadata file for raw images
+    - Apple's non-destructive iphone edit files in "aae"
+    - ....
+  
+### What this tool does
 
-## Usage
+- It scans a directory and groups files based on their name similiarity. (preserving relationship with edit files)
+- Then peaks in to the exif metadata of the primary file and tries to get the "creation date"
+- Shows you the old name and new name and whether the file has related files.
+- Renames the files you selected you wanted to be renamed
 
-**NOTE**
+**Note**
 
-Currently it reliese on the `exiftool` dependency that needs to be installed on your system.
+If it's difficutl to determin if the media is:
 
-Do a dry run without a rename to see what the output is going to be:
+- Photo and some metadata files
+- Photo and a video file and some metadata files
+- Video and some metadata files
 
-`eximd rename "path/to/dir_or_file"`
+Then it shows you the groupings and won't do the renaming. This is based on the usecase I've found so far. In case you have other use cases, please feel free to open an issue and describe the case. I might end up adding it if it make sense and it helps you with your files. 
 
-If you are sure that you are ok with the next file names, you can commit the changes with:
 
-`eximd rename --exec "path/to/dir_or_file"`
+## It is alos a CLI app
 
-## TODO:
+If you fency a cli app instead. You can download it with **Homebrew**
 
-- Make a UI for people who don't want to use the cli app.
-- Expand the app to "tag" the photos with GPS coordinates
-- Make a visualization on the map of where the files are localted and how they moved acorss time
+- tap
+- 
+
