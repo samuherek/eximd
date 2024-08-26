@@ -48,6 +48,8 @@ impl ExifNotifier for ConsoleNotifier {
 pub fn process_files<F: core::config::FileSystem>(fs: &F, files: &[InputFile]) {
     let cmd_path = "exiftool";
     let nf = ConsoleNotifier::new();
+    println!("");
+    println!("-");
     for mut group in exif::group_same_name_files(files) {
         match &mut group {
             FileNameGroup::Image { image, .. } => {
@@ -55,32 +57,40 @@ pub fn process_files<F: core::config::FileSystem>(fs: &F, files: &[InputFile]) {
                 if let Some(next_stem) = image.next_file_stem_from_exif() {
                     exif::rename_with_rollback(fs, &nf, group.merge_into_rename_refs(), &next_stem);
                 }
+                println!("-")
             }
             FileNameGroup::Video { video, .. } => {
                 video.fetch_and_set_metadata(&cmd_path);
                 if let Some(next_stem) = video.next_file_stem_from_exif() {
                     exif::rename_with_rollback(fs, &nf, group.merge_into_rename_refs(), &next_stem);
                 }
+                println!("-")
             }
             FileNameGroup::LiveImage { image, .. } => {
                 image.fetch_and_set_metadata(&cmd_path);
                 if let Some(next_stem) = image.next_file_stem_from_exif() {
                     exif::rename_with_rollback(fs, &nf, group.merge_into_rename_refs(), &next_stem);
                 }
+                println!("-")
             }
-            FileNameGroup::Uncertain { primary, config, .. } => {
+            FileNameGroup::Uncertain {
+                primary, config, ..
+            } => {
                 let values = primary.iter().chain(config.iter()).collect::<Vec<_>>();
                 for item in values {
                     nf.uncertain(&item.src)
                 }
+                println!("-")
             }
             FileNameGroup::Unsupported { config, .. } => {
                 for item in config {
-                    nf.unsupported(&item.src)
+                    nf.unsupported(&item.src);
+                    println!("-");
                 }
             }
         }
     }
+    println!("");
 }
 
 pub fn print_mode(mode: &RunType) {
