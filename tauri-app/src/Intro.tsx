@@ -21,7 +21,7 @@ const tauirActor = fromCallback(({ sendBack }) => {
 });
 
 const tauriDropInputCommand = fromPromise(async ({ input }) => {
-    const res = await invoke("drop_input", { payload: { items: input } });
+    const res = await invoke("drop_input_cmd", { payload: { items: input } });
     console.log("command res", res);
     return res;
 });

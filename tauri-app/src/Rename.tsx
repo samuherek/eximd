@@ -3,6 +3,7 @@ import { useSelector } from "@xstate/react";
 import { raiseErrorToUI } from './utils';
 import { invoke } from "@tauri-apps/api";
 import { listen } from "@tauri-apps/api/event";
+import { toast } from "react-toastify";
 
 type Props = {
     actorRef: ActorRefFrom<typeof renameMachine>
@@ -54,7 +55,7 @@ type FileGroupType = FileGroupImage | FileGroupVideo | FileGroupLiveImage | File
 type FileGroupToDisplay = FileGroupImage | FileGroupVideo | FileGroupLiveImage;
 
 const tauriCollectCommand = fromPromise(async () => {
-    const res = await invoke<{ files: FileGroupType[], file_count: number }>("collect_rename_files");
+    const res = await invoke<{ files: FileGroupType[], file_count: number }>("collect_rename_files_cmd");
     const [items, uncertain, unsupported] = res.files.reduce((prev, next) => {
         if (next.type === "Unsupported") {
             prev[2].push(next);
@@ -75,7 +76,12 @@ const tauriCollectCommand = fromPromise(async () => {
 });
 
 const tauriExifCollectCommand = fromPromise(async () => {
-    const res = await invoke<null>("start_exif_collection");
+    const res = await invoke<null>("start_exif_collection_cmd");
+    return res;
+});
+
+const tauriCommitRenameGroupsCommand = fromPromise(async ({ input }) => {
+    const res = await invoke<null>("commit_rename_groups_cmd", { payload: { items: input } });
     return res;
 });
 
@@ -108,6 +114,20 @@ const tauriExifDataListener = fromCallback(({ sendBack }) => {
     return () => {
         unlisten.then(fn => fn())
         doneUnlisten.then(fn => fn())
+    }
+});
+
+const tauriCommitRenameDoneListener = fromCallback(({ sendBack }) => {
+    const unlisten = listen<string>("RENAME_COMMIT_SUCCESS_MSG", (data) => {
+        console.log("commit done data ", data);
+        sendBack({ type: "RENAME_COMMIT_SUCCESS", payload: data.payload })
+    });
+    const doneUnlisten = listen("RENAME_COMMIT_DONE_MSG", () => {
+        sendBack({ type: "RENAME_COMMIT_DONE" });
+    });
+    return () => {
+        unlisten.then(fn => fn());
+        doneUnlisten.then(fn => fn());
     }
 });
 
@@ -145,6 +165,7 @@ const supportedItemMachine = setup({
             selected: boolean,
             src_next: string | null,
             file_name_next: string | null
+            isCommitted: boolean,
         },
         input: FileGroupToDisplay,
         events: { type: "DESELECT_ITEM" }
@@ -152,6 +173,7 @@ const supportedItemMachine = setup({
         | { type: "SELECT_ITEM_FROM_PARENT" }
         | { type: "DESELECT_ITEM_FROM_PARENT" }
         | { type: "SET_NEXT_STEM", payload: ExifFileDataEvent }
+        | { type: "RENAME_COMMIT_SUCCESS_FROM_PARENT" }
     },
     guards: {
         isSelected: ({ context }) => context.selected === true,
@@ -164,6 +186,7 @@ const supportedItemMachine = setup({
         selected: true,
         src_next: null,
         file_name_next: null,
+        isCommitted: false
     }),
     on: {
         DESELECT_ITEM: {
@@ -205,7 +228,24 @@ const supportedItemMachine = setup({
                 }
             }
         },
-        ready: {}
+        ready: {
+            on: {
+                RENAME_COMMIT_SUCCESS_FROM_PARENT: {
+                    target: "done",
+                    actions: assign({
+                        isCommitted: () => true
+                    })
+                }
+            }
+        },
+        done: {
+            on: {
+                DESELECT_ITEM: {},
+                SELECT_ITEM: {},
+                DESELECT_ITEM_FROM_PARENT: {},
+                SELECT_ITEM_FROM_PARENT: {},
+            }
+        }
     }
 });
 
@@ -228,11 +268,16 @@ const renameMachine = setup({
         | { type: "DESELECT_ITEM" }
         | { type: "SELECT_ALL" }
         | { type: "DESELECT_ALL" }
+        | { type: "COMMIT_RENAME_GROUPS" }
+        | { type: "RENAME_COMMIT_SUCCESS", payload: string }
+        | { type: "RENAME_COMMIT_DONE" }
     },
     actors: {
         tauriCollectCommand,
         tauriExifCollectCommand,
-        tauriExifDataListener
+        tauriExifDataListener,
+        tauriCommitRenameGroupsCommand,
+        tauriCommitRenameDoneListener
     },
     actions: {
         updateItemSelection: enqueueActions(({ context, enqueue }) => {
@@ -335,12 +380,54 @@ const renameMachine = setup({
                     },
                 },
             },
-            ready: {},
+            ready: {
+                on: {
+                    COMMIT_RENAME_GROUPS: 'committing',
+                }
+            },
             committing: {
+                initial: "start",
+                invoke: {
+                    src: "tauriCommitRenameDoneListener",
+                },
+                states: {
+                    start: {
+                        invoke: {
+                            src: 'tauriCommitRenameGroupsCommand',
+                            onDone: "loading",
+                            onError: {
+                                actions: raiseErrorToUI,
+                            },
+                            input: ({ context }) => {
+
+                                const toRename = context.items
+                                    .filter(x => x.getSnapshot().context.selected)
+                                    .map(x => x.getSnapshot().context.file.key)
+                                console.log("keys to rename", toRename);
+                                return toRename
+                            }
+                        },
+                    },
+                    loading: {
+                        on: {
+                            RENAME_COMMIT_SUCCESS: {
+                                actions: [(data) => console.log("we are here", data),
+                                sendTo(({ event }) => event.payload, { type: "RENAME_COMMIT_SUCCESS_FROM_PARENT" })
+                                ]
+                            },
+                            RENAME_COMMIT_DONE: {
+                                target: "#rename-machine.done"
+                            }
+                        }
+                    },
+                },
                 on: {
                     TOGGLE_SELECTION_ALL: {},
                     RESET_TO_INTRO: {}
                 }
+            },
+            done: {
+                entry: () => toast("Done renaming", { type: "success" })
             }
         },
         on: {
@@ -426,21 +513,28 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
         return state.context
     });
     const isSelected = item.selected;
-    // const isExifing = useSelector(actorRef, state => state.matches("exifing"));
-    const isReady = useSelector(actorRef, state => state.matches("ready"));
+    const isExifing = useSelector(actorRef, state => state.matches("exifing"));
+    // const isReady = useSelector(actorRef, state => state.matches("ready"));
+    const isCommitted = useSelector(actorRef, state => state.context.isCommitted);
 
     return (
         <li className="grid grid-cols-[minmax(50px,_300px)_minmax(100px,_1fr)] items-center py-4 pl-1.5 border-b border-neutral-800">
             <div className="flex items-center whitespace-nowrap">
-                <button
-                    className="py-1 px-2 mr-2 flex justify-center"
-                    onClick={() => { actorRef.send({ type: item.selected ? "DESELECT_ITEM" : "SELECT_ITEM" }) }}>
-                    {isSelected ? (
-                        <svg className="w-4 h-4 text-amber-500" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M64 32C28.7 32 0 60.7 0 96L0 416c0 35.3 28.7 64 64 64l320 0c35.3 0 64-28.7 64-64l0-320c0-35.3-28.7-64-64-64L64 32zM337 209L209 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L303 175c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9z" /></svg>
-                    ) : (
-                        <svg className="w-4 h-4 text-neutral-500" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M384 64c17.7 0 32 14.3 32 32l0 320c0 17.7-14.3 32-32 32L64 448c-17.7 0-32-14.3-32-32L32 96c0-17.7 14.3-32 32-32l320 0zM64 32C28.7 32 0 60.7 0 96L0 416c0 35.3 28.7 64 64 64l320 0c35.3 0 64-28.7 64-64l0-320c0-35.3-28.7-64-64-64L64 32z" /></svg>
-                    )}
-                </button>
+                {!isCommitted ? (
+                    <button
+                        className="py-1 px-2 mr-2 flex justify-center"
+                        onClick={() => { actorRef.send({ type: item.selected ? "DESELECT_ITEM" : "SELECT_ITEM" }) }}>
+                        {isSelected ? (
+                            <svg className="w-4 h-4 text-amber-500" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M64 32C28.7 32 0 60.7 0 96L0 416c0 35.3 28.7 64 64 64l320 0c35.3 0 64-28.7 64-64l0-320c0-35.3-28.7-64-64-64L64 32zM337 209L209 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L303 175c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9z" /></svg>
+                        ) : (
+                            <svg className="w-4 h-4 text-neutral-500" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M384 64c17.7 0 32 14.3 32 32l0 320c0 17.7-14.3 32-32 32L64 448c-17.7 0-32-14.3-32-32L32 96c0-17.7 14.3-32 32-32l320 0zM64 32C28.7 32 0 60.7 0 96L0 416c0 35.3 28.7 64 64 64l320 0c35.3 0 64-28.7 64-64l0-320c0-35.3-28.7-64-64-64L64 32z" /></svg>
+                        )}
+                    </button>
+                ) : (
+                    <span className="py-1 px-2 mr-2 flex justify-center">
+                        <svg className="w-4 h-4 text-neutral-500" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path className="fa-secondary" opacity=".4" d="M0 96C0 60.7 28.7 32 64 32H384c35.3 0 64 28.7 64 64V416c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64V96z" /><path className="fa-primary" d="" /></svg>
+                    </span>
+                )}
                 {item.file.type === "Image" ? (
                     <FileGroupImage item={item.file.image} />
                 ) : item.file.type === "Video" ? (
@@ -452,9 +546,9 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
                 )}
             </div>
             <div className="flex whitespace-nowrap">
-                {isReady && item.file_name_next ? (
+                {!isExifing && item.file_name_next ? (
                     <div className="flex items-center">
-                        <span className="text-neutral-500 mr-4">rename to:</span>
+                        <span className="text-neutral-500 mr-4">{isCommitted ? "renamed" : "rename"} to:</span>
                         <span className="mr-4">{item.file_name_next}</span>
                     </div>
                 ) : null}
@@ -467,15 +561,15 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
                     ) : null}
                 </div>
                 <div className="w-12 flex items-center justify-center">
-                    {false ? (
-                        <svg className="w-4 h-4" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+                    {isCommitted ? (
+                        <svg className="w-5 h-5 text-green-300" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
                             <path className="fa-secondary" opacity=".4" d="M0 256a256 256 0 1 0 512 0A256 256 0 1 0 0 256zm136 0c0-6.1 2.3-12.3 7-17c9.4-9.4 24.6-9.4 33.9 0l47 47c37-37 74-74 111-111c4.7-4.7 10.8-7 17-7s12.3 2.3 17 7c2.3 2.3 4.1 5 5.3 7.9c.6 1.5 1 2.9 1.3 4.4c.2 1.1 .3 2.2 .3 2.2c.1 1.2 .1 1.2 .1 2.5c-.1 1.5-.1 1.9-.1 2.3c-.1 .7-.2 1.5-.3 2.2c-.3 1.5-.7 3-1.3 4.4c-1.2 2.9-2.9 5.6-5.3 7.9c-42.7 42.7-85.3 85.3-128 128c-4.7 4.7-10.8 7-17 7s-12.3-2.3-17-7c-21.3-21.3-42.7-42.7-64-64c-4.7-4.7-7-10.8-7-17z" />
                             <path className="fa-primary" d="M369 175c9.4 9.4 9.4 24.6 0 33.9L241 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L335 175c9.4-9.4 24.6-9.4 33.9 0z" />
                         </svg>
                     ) : null}
                 </div>
             </div>
-        </li>
+        </li >
     )
 }
 
@@ -562,7 +656,7 @@ function Rename({ actorRef }: Props) {
                     </div>
                     <div className="flex items-center">
                         {file_count ? (
-                            <span className="text-neutral-500">found {file_count} files</span>
+                            <span className="text-neutral-500">has {file_count} files</span>
                         ) : null}
                     </div>
                 </div>
@@ -606,6 +700,7 @@ function Rename({ actorRef }: Props) {
                                     disabled={numbOfItemsToRename === 0}
                                     type="button"
                                     className="text-white bg-amber-700 hover:bg-amber-800 focus:ring-4 focus:outline-none focus:ring-amger-300 font-medium rounded-lg text-sm py-1.5 px-3 text-center inline-flex items-center dark:bg-amber-600 dark:hover:bg-amber-700 dark:focus:ring-amber-800 disabled:opcaity-50"
+                                    onClick={() => actorRef.send({ type: "COMMIT_RENAME_GROUPS" })}
                                 >
                                     Rename {numbOfItemsToRename} groups
                                 </button>
@@ -618,18 +713,26 @@ function Rename({ actorRef }: Props) {
                 {items.map((item, index) => (
                     <Item actorRef={item} key={index} />
                 ))}
-                <div className="py-3 border-b border-neutral-200 dark:border-neutral-800">
-                    <span className="ml-3 text-neutral-500"><span className="mr-4">---</span>Uncertain groups</span>
-                </div>
-                {uncertain.map((item, index) => (
-                    <UncertainItem actorRef={item} key={`un-${index}`} />
-                ))}
-                <div className="py-3 border-b border-neutral-200 dark:border-neutral-800">
-                    <span className="ml-3 text-neutral-500"><span className="mr-4">---</span>Non media files</span>
-                </div>
-                {unsupported.map((item, index) => (
-                    <UnsupportedItem actorRef={item} key={`u-${index}`} />
-                ))}
+                {uncertain.length > 0 ? (
+                    <>
+                        <div className="py-3 border-b border-neutral-200 dark:border-neutral-800">
+                            <span className="ml-3 text-neutral-500"><span className="mr-4">---</span>Uncertain groups</span>
+                        </div>
+                        {uncertain.map((item, index) => (
+                            <UncertainItem actorRef={item} key={`un-${index}`} />
+                        ))}
+                    </>
+                ) : null}
+                {unsupported.length > 0 ? (
+                    <>
+                        <div className="py-3 border-b border-neutral-200 dark:border-neutral-800">
+                            <span className="ml-3 text-neutral-500"><span className="mr-4">---</span>Non media files</span>
+                        </div>
+                        {unsupported.map((item, index) => (
+                            <UnsupportedItem actorRef={item} key={`u-${index}`} />
+                        ))}
+                    </>
+                ) : null}
             </ul>
         </div >
     )

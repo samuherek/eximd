@@ -1,7 +1,9 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use eximd::exif::{ExifFile, FileNameGroup};
+use eximd::exif::{ExifFile, FileNameGroup, FileNameGroupKey};
+use eximd::file::FilePath;
 use serde::ser::SerializeStruct;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -38,7 +40,7 @@ impl serde::Serialize for FileNameGroupV {
         match &self.0 {
             FileNameGroup::Image { key, image, config } => {
                 state.serialize_field("type", "Image")?;
-                state.serialize_field("key", key)?;
+                state.serialize_field("key", key.value())?;
                 state.serialize_field("image", &exif_file_to_json(&image))?;
                 state.serialize_field(
                     "config",
@@ -52,7 +54,7 @@ impl serde::Serialize for FileNameGroupV {
                 config,
             } => {
                 state.serialize_field("type", "LiveImage")?;
-                state.serialize_field("key", key)?;
+                state.serialize_field("key", key.value())?;
                 state.serialize_field("image", &exif_file_to_json(&image))?;
                 state.serialize_field("video", &exif_file_to_json(&video))?;
                 state.serialize_field(
@@ -62,7 +64,7 @@ impl serde::Serialize for FileNameGroupV {
             }
             FileNameGroup::Video { key, video, config } => {
                 state.serialize_field("type", "Video")?;
-                state.serialize_field("key", key)?;
+                state.serialize_field("key", key.value())?;
                 state.serialize_field("video", &exif_file_to_json(&video))?;
                 state.serialize_field(
                     "config",
@@ -75,7 +77,7 @@ impl serde::Serialize for FileNameGroupV {
                 config,
             } => {
                 state.serialize_field("type", "Uncertain")?;
-                state.serialize_field("key", key)?;
+                state.serialize_field("key", key.value())?;
                 state.serialize_field(
                     "primary",
                     &primary.iter().map(exif_file_to_json).collect::<Vec<_>>(),
@@ -87,7 +89,7 @@ impl serde::Serialize for FileNameGroupV {
             }
             FileNameGroup::Unsupported { key, config } => {
                 state.serialize_field("type", "Unsupported")?;
-                state.serialize_field("key", key)?;
+                state.serialize_field("key", key.value())?;
                 state.serialize_field(
                     "config",
                     &config.iter().map(exif_file_to_json).collect::<Vec<_>>(),
@@ -132,7 +134,7 @@ impl ExifFileData {
 }
 
 #[tauri::command]
-fn start_exif_collection(
+fn start_exif_collection_cmd(
     app_handle: AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     window: Window,
@@ -149,6 +151,7 @@ fn start_exif_collection(
             .join("exiftool/exiftool")
             .to_string_lossy()
             .to_string();
+
         for (i, mut group) in file_group.iter_mut().enumerate() {
             match &mut group {
                 FileNameGroup::Image { image, .. } => {
@@ -206,8 +209,125 @@ fn start_exif_collection(
     Ok(())
 }
 
+struct TauriCommitNotifier<'a> {
+    window: &'a Window,
+    group_key: &'a FileNameGroupKey,
+}
+
+impl<'a> TauriCommitNotifier<'a> {
+    fn new(window: &'a Window, group_key: &'a FileNameGroupKey) -> Self {
+        Self { window, group_key }
+    }
+}
+
+impl eximd::exif::ExifNotifier for TauriCommitNotifier<'_> {
+    fn rename_success(&self, _prev: &FilePath, _next: &Path) -> () {
+        self.window
+            .emit("RENAME_COMMIT_SUCCESS_MSG", self.group_key)
+            .expect("send message to FE");
+    }
+
+    fn rename_error(&self, _prev: &FilePath, err: String) -> () {
+        eprintln!("{} -> {}", self.group_key.to_string(), err);
+        unimplemented!();
+    }
+
+    fn rollback_success(&self, _next: &Path, _prev: &FilePath) -> () {
+        println!("{} -> (ROLLBACK)", self.group_key.to_string(),);
+        unimplemented!();
+    }
+
+    fn rollback_error(&self, _next: &Path, err: String) -> () {
+        eprintln!(
+            "ERROR: rolling back the {}: {}",
+            self.group_key.to_string(),
+            err
+        );
+        unimplemented!();
+    }
+
+    fn uncertain(&self, _src: &FilePath) -> () {
+        println!("{} -> Uncertain Primary file", self.group_key.to_string());
+        unimplemented!();
+    }
+
+    fn unsupported(&self, _src: &FilePath) -> () {
+        println!("{} -> Unsupported file", self.group_key.to_string());
+        unimplemented!();
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CommitRenamePayload {
+    items: Vec<FileNameGroupKey>,
+}
+
 #[tauri::command]
-async fn drop_input(
+async fn commit_rename_groups_cmd(
+    state: tauri::State<'_, Arc<AppState>>,
+    window: Window,
+    payload: CommitRenamePayload,
+) -> Result<(), String> {
+    let fs = eximd::config::RealFileSystem::new(&eximd::config::RunType::Exec);
+    let items = payload.items;
+    let groups = {
+        let file_groups = state.file_group.lock().unwrap();
+
+        file_groups
+            .iter()
+            .filter(|x| items.iter().any(|y| y == x.group_key()))
+            .map(|x| x.clone())
+            .collect::<Vec<_>>()
+    };
+
+    thread::spawn(move || {
+        for group in groups {
+            let nf = TauriCommitNotifier::new(&window, group.group_key());
+            match group {
+                FileNameGroup::Image { ref image, .. } => {
+                    if let Some(next_stem) = image.next_file_stem_from_exif() {
+                        eximd::exif::rename_with_rollback(
+                            &fs,
+                            &nf,
+                            group.merge_into_rename_refs(),
+                            &next_stem,
+                        );
+                    }
+                }
+                FileNameGroup::Video { ref video, .. } => {
+                    if let Some(next_stem) = video.next_file_stem_from_exif() {
+                        eximd::exif::rename_with_rollback(
+                            &fs,
+                            &nf,
+                            group.merge_into_rename_refs(),
+                            &next_stem,
+                        );
+                    }
+                }
+                FileNameGroup::LiveImage { ref image, .. } => {
+                    if let Some(next_stem) = image.next_file_stem_from_exif() {
+                        eximd::exif::rename_with_rollback(
+                            &fs,
+                            &nf,
+                            group.merge_into_rename_refs(),
+                            &next_stem,
+                        );
+                    }
+                }
+                _ => eprintln!("Error: we are trying to rename a file we are not supposed to."),
+            }
+        }
+
+        window
+            .emit("RENAME_COMMIT_DONE_MSG", "")
+            .expect("send message to FE");
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn drop_input_cmd(
     state: tauri::State<'_, Arc<AppState>>,
     payload: DropInputPayload,
 ) -> Result<PathBuf, String> {
@@ -228,8 +348,10 @@ async fn drop_input(
 }
 
 #[tauri::command]
-fn collect_rename_files(state: tauri::State<'_, Arc<AppState>>) -> Result<DropView, String> {
+fn collect_rename_files_cmd(state: tauri::State<'_, Arc<AppState>>) -> Result<DropView, String> {
     let input_path = state.source.lock().unwrap();
+    // TODO: turn this collect files into a separate thread.
+    // because on large directories or on the NAS, it freezes the UI
     let files = eximd::dir::collect_files(&input_path)?;
     let file_count = files.len();
     let file_groups = eximd::exif::group_same_name_files(&files);
@@ -258,10 +380,11 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-// TODO: command cancle exif collection if the app canceles or drops new files
-            drop_input,
-            collect_rename_files,
-            start_exif_collection 
+            // TODO: command cancle exif collection if the app canceles or drops new files
+            drop_input_cmd,
+            collect_rename_files_cmd,
+            start_exif_collection_cmd,
+            commit_rename_groups_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

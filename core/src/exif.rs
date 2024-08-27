@@ -256,31 +256,66 @@ pub fn get_exif_file_from_input(cmd_path: &str, item: &InputFile) -> ExifFile {
     ExifFile::new(item, data)
 }
 
+#[derive(Debug, Eq, PartialEq, Clone, serde::Deserialize, serde::Serialize)]
+pub struct FileNameGroupKey(String);
+
+impl FileNameGroupKey {
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for FileNameGroupKey {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<&InputFile> for FileNameGroupKey {
+    fn from(file: &InputFile) -> Self {
+        Self(file.hash_key())
+    }
+}
+
+impl ToString for FileNameGroupKey {
+    fn to_string(&self) -> String {
+        self.value().to_owned()
+    }
+}
+
+impl std::hash::Hash for FileNameGroupKey {
+    // This hash function is needed in order to create a unieuq
+    // hash key that represents possibly unique file exif data
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value().hash(state);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum FileNameGroup {
     Image {
-        key: String,
+        key: FileNameGroupKey,
         image: ExifFile,
         config: Vec<ExifFile>,
     },
     LiveImage {
-        key: String,
+        key: FileNameGroupKey,
         image: ExifFile,
         video: ExifFile,
         config: Vec<ExifFile>,
     },
     Video {
-        key: String,
+        key: FileNameGroupKey,
         video: ExifFile,
         config: Vec<ExifFile>,
     },
     Uncertain {
-        key: String,
+        key: FileNameGroupKey,
         primary: Vec<ExifFile>,
         config: Vec<ExifFile>,
     },
     Unsupported {
-        key: String,
+        key: FileNameGroupKey,
         config: Vec<ExifFile>,
     },
 }
@@ -315,14 +350,24 @@ impl FileNameGroup {
         }
         merged
     }
+
+    pub fn group_key(&self) -> &FileNameGroupKey {
+        match self {
+            FileNameGroup::Image { key, .. } => key,
+            FileNameGroup::Video { key, .. } => key,
+            FileNameGroup::LiveImage { key, .. } => key,
+            FileNameGroup::Uncertain { key, .. } => key,
+            FileNameGroup::Unsupported { key, .. } => key,
+        }
+    }
 }
 
 pub fn group_same_name_files(files: &[InputFile]) -> Vec<FileNameGroup> {
-    let mut groups: HashMap<String, (Vec<ExifFile>, Vec<ExifFile>)> = HashMap::new();
+    let mut groups: HashMap<FileNameGroupKey, (Vec<ExifFile>, Vec<ExifFile>)> = HashMap::new();
 
     for item in files {
         let g = groups
-            .entry(item.hash_key())
+            .entry(FileNameGroupKey::from(item))
             .or_insert((Vec::new(), Vec::new()));
         if utils::is_primary_ext(item.ext.value()) {
             g.0.push(ExifFile::from(item));
@@ -640,7 +685,7 @@ mod test {
 
         match &groups[0] {
             FileNameGroup::Image { key, image, config } => {
-                assert_eq!(key, "file");
+                assert_eq!(key.value(), "file");
                 assert_eq!(image.ext.value(), "jpg");
                 assert_eq!(config.len(), 0);
             }
@@ -671,7 +716,7 @@ mod test {
 
         match &groups[0] {
             FileNameGroup::Image { key, image, config } => {
-                assert_eq!(key, "file");
+                assert_eq!(key.value(), "file");
                 assert_eq!(image.ext.value(), "jpg");
                 assert_eq!(config.len(), 2);
             }
@@ -692,7 +737,7 @@ mod test {
 
         match &groups[0] {
             FileNameGroup::Video { key, video, config } => {
-                assert_eq!(key, "file");
+                assert_eq!(key.value(), "file");
                 assert_eq!(video.ext.value(), "mov");
                 assert_eq!(config.len(), 0);
             }
@@ -719,7 +764,7 @@ mod test {
 
         match &groups[0] {
             FileNameGroup::Video { key, video, config } => {
-                assert_eq!(key, "file");
+                assert_eq!(key.value(), "file");
                 assert_eq!(video.ext.value(), "mov");
                 assert_eq!(config.len(), 1);
             }
@@ -746,7 +791,7 @@ mod test {
 
         match &groups[0] {
             FileNameGroup::Unsupported { key, config } => {
-                assert_eq!(key, "file");
+                assert_eq!(key.value(), "file");
                 assert_eq!(config.len(), 2);
             }
             _ => panic!("Unexpected group type"),
@@ -777,7 +822,7 @@ mod test {
                 video,
                 config,
             } => {
-                assert_eq!(key, "file");
+                assert_eq!(key.value(), "file");
                 assert_eq!(image.ext.value(), "jpg");
                 assert_eq!(video.ext.value(), "mov");
                 assert_eq!(config.len(), 0);
