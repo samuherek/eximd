@@ -1,3 +1,90 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+
+.enter-from-down {
+    --delay: 50ms;
+    --initial-delay: 0ms;
+    animation: enter-from-down 200ms cubic-bezier(0.5, 0, 0.2, 1) backwards;
+}
+
+@keyframes enter-from-down {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+}
+
+/* ------- */
+
+.enter-from-top {
+    --delay: 50ms;
+    --initial-delay: 0ms;
+    animation: enter-from-top 200ms cubic-bezier(0.5, 0, 0.2, 1) backwards;
+}
+
+@keyframes enter-from-top {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+}
+
+/* ------ */
+
+.enter-opacity {
+    --delay: 50ms;
+    --initial-delay: 0ms;
+    animation: enter-opacity 150ms cubic-bezier(0.5, 0, 0.2, 1) backwards;
+}
+
+@keyframes enter-opacity {
+    from {
+        opacity: 0;
+    }
+}
+
+/* --------- */
+
+.leave-opacity {
+    --delay: 50ms;
+    --initial-delay: 0ms;
+    animation: leave-opacity 150ms cubic-bezier(0.5, 0, 0.2, 1) forwards;
+}
+
+@keyframes leave-opacity {
+    to {
+        opacity: 0;
+    }
+}
+
+/* --- ----- */
+
+.leave-to-down {
+    --delay: 50ms;
+    --initial-delay: 0ms;
+    animation: leave-to-down 200ms cubic-bezier(0.5, 0, 0.2, 1) forwards;
+}
+
+@keyframes leave-to-down {
+    to {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+}
+
+/* ----  */
+
+.leave-to-top {
+    --delay: 50ms;
+    --initial-delay: 0ms;
+    animation: leave-to-top 200ms cubic-bezier(0.5, 0, 0.2, 1) backwards;
+}
+
+@keyframes leave-to-top {
+    to {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+}

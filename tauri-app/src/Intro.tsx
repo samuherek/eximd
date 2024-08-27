@@ -120,35 +120,7 @@ function Intro({ actorRef }: Props) {
     });
 
     return (
-        <div>
-            <div className="flex items-center justify-center mb-12">
-                <button
-                    type="button"
-                    className={clsx(
-                        "mr-4 text-white items-center outline-none font-medium rounded-md text-sm py-1.5 px-3 text-center inline-flex",
-                        {
-                            "bg-amber-700 hover:bg-amber-800 dark:bg-amber-600 dark:hover:bg-amber-700 dark:focus:ring-amber-800": rename,
-                            "text-neutral-900 bg-neutral-100 border-neutral-200 hover:bg-nuetral-100 hover:text-amber-700 dark:bg-neutral-800 dark:text-neutral-400 dark:border-neutral-600 dark:hover:text-white dark:hover:bg-neutral-700": dedup
-                        }
-                    )}
-                    onClick={() => { actorRef.send({ type: "CLICK_RENAME" }) }}
-                >
-                    Rename media
-                </button>
-                <button
-                    type="button"
-                    className={clsx(
-                        "mr-4 text-white focus:ring-4 items-center focus:outline-none font-medium rounded-md text-sm py-1.5 px-3 text-center inline-flex",
-                        {
-                            "bg-amber-700 hover:bg-amber-800 dark:bg-amber-600 dark:hover:bg-amber-700 dark:focus:ring-amber-800": dedup,
-                            "text-neutral-900 bg-neutral-100 border-neutral-200 hover:bg-nuetral-100 hover:text-amber-700 dark:bg-neutral-800 dark:text-neutral-400 dark:border-neutral-600 dark:hover:text-white dark:hover:bg-neutral-700": rename
-                        }
-                    )}
-                    onClick={() => { actorRef.send({ type: "CLICK_DEDUP" }) }}
-                >
-                    Find duplicates
-                </button>
-            </div>
+        <>
             <div className="flex items-center justify-center w-full mb-12" ref={dropRef}>
                 <div className="flex flex-col items-center justify-center w-full h-64 border-2 border-neutral-700 dark:border-neutral-300 border-dashed rounded-lg"
                     style={{ borderColor: isOver ? "green" : undefined }}
@@ -178,7 +150,7 @@ function Intro({ actorRef }: Props) {
                     </p>
                 )}
             </div>
-        </div>
+        </>
     )
 }
 

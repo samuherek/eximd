@@ -24,6 +24,8 @@
         "title": "ExiMd",
         "width": 800,
         "height": 600,
+        "minWidth": 840,
+        "minHeight": 640,
         "fileDropEnabled": true
       }
     ],

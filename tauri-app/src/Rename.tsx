@@ -311,24 +311,30 @@ const renameMachine = setup({
                     onDone: {
                         target: 'exifing',
                         actions: assign({
+                            // @ts-ignore
                             items: ({ event, spawn }) => {
                                 return event.output.items.map(
+                                    // @ts-ignore
                                     (item) => spawn(supportedItemMachine, {
                                         id: item.key,
                                         input: item
                                     })
                                 )
                             },
+                            // @ts-ignore
                             uncertain: ({ event, spawn }) => {
                                 return event.output.uncertain.map(item => {
+                                    // @ts-ignore
                                     return spawn(uncertainItemMachine, {
                                         id: item.key,
                                         input: item
                                     })
                                 })
                             },
+                            // @ts-ignore
                             unsupported: ({ event, spawn }) => {
                                 return event.output.unsupported.map(item => {
+                                    // @ts-ignore
                                     return spawn(unsupportedItemMachine, {
                                         id: item.key,
                                         input: item
@@ -518,7 +524,7 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
     const isCommitted = useSelector(actorRef, state => state.context.isCommitted);
 
     return (
-        <li className="grid grid-cols-[minmax(50px,_300px)_minmax(100px,_1fr)] items-center py-4 pl-1.5 border-b border-neutral-800">
+        <li className="grid grid-cols-[minmax(50px,1fr)_300px] items-center py-4 pl-1.5 border-b border-neutral-800">
             <div className="flex items-center whitespace-nowrap">
                 {!isCommitted ? (
                     <button
@@ -544,6 +550,14 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
                 ) : (
                     <span>Error::::</span>
                 )}
+                <div className="ml-4 flex items-center">
+                    {item.file.type === "LiveImage" && item.file.video ? (
+                        <span className="flex text-neutral-500">< svg style={{ fill: "currentColor" }} className="w-4 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><path d="M0 128C0 92.7 28.7 64 64 64l256 0c35.3 0 64 28.7 64 64l0 256c0 35.3-28.7 64-64 64L64 448c-35.3 0-64-28.7-64-64L0 128zM559.1 99.8c10.4 5.6 16.9 16.4 16.9 28.2l0 256c0 11.8-6.5 22.6-16.9 28.2s-23 5-32.9-1.6l-96-64L416 337.1l0-17.1 0-128 0-17.1 14.2-9.5 96-64c9.8-6.5 22.4-7.2 32.9-1.6z" /></svg></span>
+                    ) : null}
+                    {item.file.config.map((config: any, i: number) => (
+                        <span key={i} className="mr-4 text-sm text-neutral-500">.{config.ext}</span>
+                    ))}
+                </div>
             </div>
             <div className="flex whitespace-nowrap">
                 {!isExifing && item.file_name_next ? (
@@ -552,14 +566,6 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
                         <span className="mr-4">{item.file_name_next}</span>
                     </div>
                 ) : null}
-                <div className="ml-auto flex items-center">
-                    {item.file.config.map((config: any, i: number) => (
-                        <span key={i} className="mr-4 text-sm text-neutral-500">+ .{config.ext}</span>
-                    ))}
-                    {item.file.type === "LiveImage" && item.file.video ? (
-                        <span className="flex text-neutral-500">< svg style={{ fill: "currentColor" }} className="w-4 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><path d="M0 128C0 92.7 28.7 64 64 64l256 0c35.3 0 64 28.7 64 64l0 256c0 35.3-28.7 64-64 64L64 448c-35.3 0-64-28.7-64-64L0 128zM559.1 99.8c10.4 5.6 16.9 16.4 16.9 28.2l0 256c0 11.8-6.5 22.6-16.9 28.2s-23 5-32.9-1.6l-96-64L416 337.1l0-17.1 0-128 0-17.1 14.2-9.5 96-64c9.8-6.5 22.4-7.2 32.9-1.6z" /></svg></span>
-                    ) : null}
-                </div>
                 <div className="w-12 flex items-center justify-center">
                     {isCommitted ? (
                         <svg className="w-5 h-5 text-green-300" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
@@ -616,6 +622,7 @@ function UncertainItem({ actorRef }: {
 }
 
 function Rename({ actorRef }: Props) {
+    console.log("we are here for some reason?");
     const source = useSelector(actorRef, (state) => {
         // console.log("rename state", state);
         return state.context.source;
@@ -631,19 +638,8 @@ function Rename({ actorRef }: Props) {
     const numbOfItemsToRename = useSelector(actorRef, state => state.context.selected_count);
 
 
-
     return (
         <div className="">
-            <div className="flex items-center justify-center mb-4">
-                <button
-                    type="button"
-                    className={"text-white items-center outline-none font-medium rounded-md text-sm py-1.5 px-3 text-center inline-flex bg-amber-700 hover:bg-amber-800 dark:bg-amber-600 dark:hover:bg-amber-700 dark:focus:ring-amber-800"}
-                    onClick={() => actorRef.send({ type: "RESET_TO_INTRO" })}
-                >
-                    Start over
-                </button>
-
-            </div>
             <div className="flex items-center justify-center mb-8">
                 <p>
                     This will rename the following files to the format `YY-MM-DD_HH-MM-SS.ext`.
