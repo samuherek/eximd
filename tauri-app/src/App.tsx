@@ -1,12 +1,14 @@
 import "./App.css";
 import { ActorRefFrom, assign, fromCallback, fromPromise, sendParent, setup } from "xstate";
-import { useMachine } from "@xstate/react";
+import { useMachine, useSelector } from "@xstate/react";
 import { renameMachine } from './Rename';
 import Rename from "./Rename";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api";
 import { enterFromDown, enterFromTop, LEAVE_TIME, leaveToDown, leaveToTop, raiseErrorToUI, useNavDelay } from "./utils";
 import { toast } from "react-toastify";
+import { FileGroupType, Path } from "./config";
+import { useEffect, useState } from "react";
 
 
 // ROUTES 
@@ -26,7 +28,7 @@ import { toast } from "react-toastify";
 //
 
 const dropListener = fromCallback(({ sendBack }) => {
-    const unlistenDrop = listen<string[]>('tauri://file-drop', async (event) => {
+    const unlistenDrop = listen<Path[]>('tauri://file-drop', async (event) => {
         sendBack({ type: "DROPPED_INPUT", payload: event.payload });
     });
     return () => {
@@ -34,43 +36,81 @@ const dropListener = fromCallback(({ sendBack }) => {
     }
 });
 
-const dropInputCmd = fromPromise<string, string | null>(async ({ input }) => {
+const collectionDoneListener = fromCallback(({ sendBack }) => {
+    const unlistenCollect = listen<{ file_count: number, files: FileGroupType[] }>('COLLECTION_SUCCESS', async (event) => {
+        sendBack({
+            type: "COLLECTION_SUCCESS", payload: {
+                filesCount: event.payload.file_count,
+                fileGroups: event.payload.files
+            }
+        });
+    });
+    return () => {
+        unlistenCollect.then((fn) => fn());
+    }
+});
+
+const dropInputCmd = fromPromise<Path, Path | null>(async ({ input }) => {
     console.assert(input !== null, "DropInputCommand got null for the drop source");
     const res = await invoke<string>("drop_input_cmd", { payload: { items: input } });
     return res;
 });
 
+const beCollectSrcCmd = fromPromise(async () => {
+    const res = await invoke<{ files: FileGroupType[], file_count: number }>("collect_rename_files_cmd");
+    return {
+        fileGroups: res.files,
+        filesCount: res.file_count
+    };
+});
+
 const dropMachine = setup({
     types: {} as {
         context: {
-            source: null | string,
-            validated_source: null | string
+            source: null | Path,
+            validated_source: null | Path,
+            fileGroups: FileGroupType[],
+            filesCount: number | null
         },
         events: { type: "DROPPED_INPUT", payload: string[] }
-        | { type: "CANCEL" },
+        | { type: "CANCEL" }
+        | {
+            type: "COLLECTION_SUCCESS", payload: { filesCount: number, fileGroups: FileGroupType[] }
+        },
         output: {
-            validated_source: string
+            validated_source: null | Path,
+            fileGroups: FileGroupType[],
+            filesCount: number
         }
 
     },
     actors: {
         dropListener,
-        dropInputCmd
+        dropInputCmd,
+        beCollectSrcCmd,
+        collectionDoneListener
     },
 }).createMachine({
     id: 'drop-machine',
     context: {
         source: null,
         validated_source: null,
+        fileGroups: [],
+        filesCount: null
     },
-    invoke: {
+    invoke: [{
         src: "dropListener",
-    },
+    }, {
+        src: "collectionDoneListener",
+    }],
     initial: 'idle',
     output: ({ context }) => {
         console.assert(!!context.validated_source, "At this point, we are certain we have the valid path");
+        console.assert(typeof context.filesCount === "number", "At this point, we are certain we have the file coutn");
         return {
-            validated_source: context.validated_source!
+            validated_source: context.validated_source!,
+            fileGroups: context.fileGroups,
+            filesCount: context.filesCount!
         }
     },
     states: {
@@ -100,7 +140,7 @@ const dropMachine = setup({
                 src: 'dropInputCmd',
                 input: ({ context }) => context.source,
                 onDone: {
-                    target: 'done',
+                    target: 'collecting',
                     actions: assign({
                         validated_source: ({ event }) => event.output,
                     })
@@ -109,6 +149,26 @@ const dropMachine = setup({
                     actions: raiseErrorToUI,
                 }
             },
+        },
+        collecting: {
+            invoke: {
+                src: 'beCollectSrcCmd',
+                onDone: {
+                    actions: (data) => console.log("TODO: beCollectSrcCmd onDone", data),
+                },
+                onError: {
+                    actions: raiseErrorToUI
+                }
+            },
+            on: {
+                COLLECTION_SUCCESS: {
+                    target: 'done',
+                    actions: assign({
+                        filesCount: ({ event }) => event.payload.filesCount,
+                        fileGroups: ({ event }) => event.payload.fileGroups
+                    })
+                }
+            }
         },
         done: {
             type: 'final'
@@ -125,7 +185,9 @@ const dropMachine = setup({
 const appMachine = setup({
     types: {} as {
         context: {
-            source: null | string,
+            source: null | Path,
+            fileGroups: FileGroupType[],
+            filesCount: null | number
         },
         event: { type: "NAV_RENAME", paylaod: string }
         | { type: "NAV_DEDUPLICATE", payload: string }
@@ -141,6 +203,8 @@ const appMachine = setup({
     systemId: "app-machine",
     context: {
         source: null,
+        fileGroups: [],
+        filesCount: null
     },
     initial: "intro",
     states: {
@@ -160,7 +224,9 @@ const appMachine = setup({
                         onDone: {
                             target: 'page',
                             actions: assign({
-                                source: ({ event }) => event.output.validated_source
+                                source: ({ event }) => event.output.validated_source,
+                                fileGroups: ({ event }) => event.output.fileGroups,
+                                filesCount: ({ event }) => event.output.filesCount,
                             })
                         },
                         onError: {
@@ -172,7 +238,16 @@ const appMachine = setup({
                     invoke: {
                         src: 'renameMachine',
                         id: 'renameMachine',
-                        input: ({ context }) => ({ source: context.source })
+                        input: ({ context }) => {
+                            console.assert(!!context.source, "At this point, we need to have the source path.");
+                            console.assert(context.fileGroups !== null, "At this point, we need to have the file groups.");
+                            console.assert(context.filesCount !== null, "At this point, we need to have the files count.");
+                            return {
+                                source: context.source!,
+                                fileGroups: context.fileGroups!,
+                                filesCount: context.filesCount!
+                            }
+                        }
                     },
                 }
             },
@@ -229,8 +304,49 @@ function Selection({ onRename, onDuplicates }: {
     )
 }
 
+function CollectFeedback() {
+    const [time, setTime] = useState(0);
+
+    useEffect(() => {
+        let timer: number | undefined;
+
+        function timing(delay: number) {
+            timer = setTimeout(() => {
+                setTime(delay);
+                timing(delay * 2);
+            }, delay)
+        }
+
+        timing(300);
+
+        return () => {
+            if (timer) {
+                clearTimeout(timer)
+            }
+        }
+    }, [setTime]);
+
+    // TODO: add a restrart logic if something goes wrong.
+    return (
+        <div className="w-[84vw] h-[440px] relative flex items-center justify-center">
+            {time >= 10000 ? (
+                <span>Something might have gone wrong.</span>
+            ) : time >= 3600 ? (
+                <span style={enterFromTop({ delay: 300, duration: 300 })}>It's taking a little noger than usual.</span>
+            ) : time >= 1600 ? (
+                <span style={enterFromTop({ delay: 300, duration: 300 })}>Be patient...</span>
+            ) : time >= 300 ? (
+                <span style={enterFromDown()}>Finding files...</span>
+            ) : null}
+            <span className="-mt-20 animate-ping absolute inline-flex h-2 w-2 rounded-full bg-green-500 opacity-75"></span>
+        </div>
+    )
+}
+
+
 function Drop({ actorRef }: { actorRef: ActorRefFrom<typeof dropMachine> }) {
     const [isLeaving, navDelay] = useNavDelay(LEAVE_TIME);
+    const isCollecting = useSelector(actorRef, state => state.matches("collecting"));
 
     return (
         <div className="h-full flex flex-col items-center justify-around">
@@ -240,20 +356,25 @@ function Drop({ actorRef }: { actorRef: ActorRefFrom<typeof dropMachine> }) {
                 </h1>
             </div>
             <div style={isLeaving ? leaveToDown({ duration: 100 }) : enterFromDown()}>
-                <button
-                    className="w-[84vw] py-24 border-4 border-dashed border-green-500 group shadow-2xl translate-y-0 hover:-translate-y-2 hover:shadow-green-800/10 rounded-[52px] bg-neutral-900 hover:bg-neutral-800 transition-all ease-in-out duration-150">
-                    <svg className="mb-6 mx-auto w-40 h-40 translate-x-2 scale-100 group-hover:scale-105 transition-all ease-in-out duration-150" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 214 190" >
-                        <path opacity="0.4" d="M0 35.625V166.25C0 164.172 0.557292 162.131 1.63472 160.275L43.2458 89.0254C45.3635 85.3516 49.2646 83.125 53.5 83.125H178.333V59.375C178.333 46.2754 167.67 35.625 154.556 35.625H110.901C104.585 35.625 98.5292 33.1387 94.0708 28.6855L84.2253 18.8145C79.767 14.3613 73.7111 11.875 67.3951 11.875H23.7778C10.6628 11.875 0 22.5254 0 35.625ZM0.891667 170.74C1.00312 171 1.11458 171.223 1.22604 171.445C1.3375 171.668 1.44896 171.928 1.59757 172.15C1.3375 171.705 1.11458 171.223 0.891667 170.74ZM171.423 171.111C174.247 168.291 176.364 164.729 177.442 160.758L171.423 171.111Z" />
-                        <path d="M53.5 83.125C49.2646 83.125 45.3636 85.3516 43.2458 89.0254L1.63474 160.275C-0.520125 163.949 -0.520125 168.477 1.59758 172.188C3.71529 175.898 7.61633 178.125 11.8889 178.125H160.5C164.735 178.125 168.636 175.898 170.754 172.225L212.365 100.975C214.52 97.3008 214.52 92.7734 212.402 89.0625C210.285 85.3516 206.384 83.125 202.111 83.125H53.5Z" />
-                    </svg>
-                    <span className="block text-xl mb-1">Drag and drop</span>
-                    <span className="text-sm text-neutral-500">(directory or a file)</span>
-                </button>
+                {isCollecting ? (
+                    <CollectFeedback />
+                ) : (
+                    <button
+                        className="w-[84vw] py-24 h-[440px] border-4 border-dashed border-green-500 group shadow-2xl translate-y-0 hover:-translate-y-2 hover:shadow-green-800/10 rounded-[52px] bg-neutral-900 hover:bg-neutral-800 transition-all ease-in-out duration-150">
+                        <svg className="mb-6 mx-auto w-40 h-40 translate-x-2 scale-100 group-hover:scale-105 transition-all ease-in-out duration-150" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 214 190" >
+                            <path opacity="0.4" d="M0 35.625V166.25C0 164.172 0.557292 162.131 1.63472 160.275L43.2458 89.0254C45.3635 85.3516 49.2646 83.125 53.5 83.125H178.333V59.375C178.333 46.2754 167.67 35.625 154.556 35.625H110.901C104.585 35.625 98.5292 33.1387 94.0708 28.6855L84.2253 18.8145C79.767 14.3613 73.7111 11.875 67.3951 11.875H23.7778C10.6628 11.875 0 22.5254 0 35.625ZM0.891667 170.74C1.00312 171 1.11458 171.223 1.22604 171.445C1.3375 171.668 1.44896 171.928 1.59757 172.15C1.3375 171.705 1.11458 171.223 0.891667 170.74ZM171.423 171.111C174.247 168.291 176.364 164.729 177.442 160.758L171.423 171.111Z" />
+                            <path d="M53.5 83.125C49.2646 83.125 45.3636 85.3516 43.2458 89.0254L1.63474 160.275C-0.520125 163.949 -0.520125 168.477 1.59758 172.188C3.71529 175.898 7.61633 178.125 11.8889 178.125H160.5C164.735 178.125 168.636 175.898 170.754 172.225L212.365 100.975C214.52 97.3008 214.52 92.7734 212.402 89.0625C210.285 85.3516 206.384 83.125 202.111 83.125H53.5Z" />
+                        </svg>
+                        <span className="block text-xl mb-1">Drag and drop</span>
+                        <span className="text-sm text-neutral-500">(directory or a file)</span>
+                    </button>
+                )}
             </div>
             <div style={isLeaving ? leaveToDown() : enterFromDown({ delay: 140 })}>
                 <button
                     onClick={() => navDelay(() => actorRef.send({ type: "CANCEL" }))}
-                    className="text-neutral-500 hover:text-green-500 px-4 py-2">
+                    disabled={isCollecting}
+                    className="text-neutral-500 hover:text-green-500 disabled:opacity-50 disabled:hover:text-neutral-500 px-4 py-2">
                     Cancel
                 </button>
             </div>
@@ -277,7 +398,7 @@ function App() {
     // console.log(state);
 
     return (
-        <div className="h-screen overflow-hidden">
+        <div className="relative h-screen overflow-hidden">
             {state.matches("intro") ? (
                 <Selection
                     onRename={() => send({ type: "NAV_RENAME" })}

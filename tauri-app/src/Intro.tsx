@@ -2,7 +2,6 @@ import { useSelector } from '@xstate/react';
 import { useDrop } from 'react-dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
 import { ActorRefFrom, assign, fromCallback, fromPromise, raise, sendParent, setup } from 'xstate';
-import clsx from 'clsx';
 import { listen } from '@tauri-apps/api/event';
 import { raiseErrorToUI } from './utils';
 import { invoke } from '@tauri-apps/api';
@@ -120,7 +119,7 @@ function Intro({ actorRef }: Props) {
     });
 
     return (
-        <>
+        <div>
             <div className="flex items-center justify-center w-full mb-12" ref={dropRef}>
                 <div className="flex flex-col items-center justify-center w-full h-64 border-2 border-neutral-700 dark:border-neutral-300 border-dashed rounded-lg"
                     style={{ borderColor: isOver ? "green" : undefined }}
@@ -150,7 +149,7 @@ function Intro({ actorRef }: Props) {
                     </p>
                 )}
             </div>
-        </>
+        </div>
     )
 }
 

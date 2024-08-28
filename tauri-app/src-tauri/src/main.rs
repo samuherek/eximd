@@ -343,24 +343,37 @@ async fn drop_input_cmd(
 }
 
 #[tauri::command]
-fn collect_rename_files_cmd(state: tauri::State<'_, Arc<AppState>>) -> Result<DropView, String> {
-    let input_path = state.source.lock().unwrap();
-    // TODO: turn this collect files into a separate thread.
-    // because on large directories or on the NAS, it freezes the UI
-    let files = eximd::dir::collect_files(&input_path)?;
-    let file_count = files.len();
-    let file_groups = eximd::exif::group_same_name_files(&files);
+fn collect_rename_files_cmd(
+    state: tauri::State<'_, Arc<AppState>>,
+    window: Window,
+) -> Result<(), String> {
+    let input_path = { state.source.lock().unwrap().clone() };
+    let state = std::sync::Arc::clone(&state);
 
-    let mut group = state.file_group.lock().unwrap();
-    *group = file_groups;
+    thread::spawn(move || match eximd::dir::collect_files(&input_path) {
+        Ok(files) => {
+            let file_count = files.len();
+            let file_groups = eximd::exif::group_same_name_files(&files);
 
-    let files = group
-        .iter()
-        .map(|x| FileNameGroupV(x.clone()))
-        .collect::<Vec<_>>();
+            let mut group = state.file_group.lock().unwrap();
+            *group = file_groups;
 
-    let res = DropView { files, file_count };
-    Ok(res)
+            let files = group
+                .iter()
+                .map(|x| FileNameGroupV(x.clone()))
+                .collect::<Vec<_>>();
+
+            let res = DropView { files, file_count };
+            window
+                .emit("COLLECTION_SUCCESS", res)
+                .expect("send message to FE to work");
+        }
+        Err(err) => {
+            eprintln!("ERROR: we could not collect files {:?}", err);
+        }
+    });
+
+    Ok(())
 }
 
 fn main() {
