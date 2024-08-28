@@ -1,4 +1,4 @@
-import { ActorRefFrom, assign, enqueueActions, fromCallback, fromPromise, sendParent, sendTo, setup } from "xstate";
+import { ActorRefFrom, assign, enqueueActions, fromCallback, fromPromise, not, or, sendParent, sendTo, setup, stateIn } from "xstate";
 import { useSelector } from "@xstate/react";
 import { enterFromTop, LEAVE_TIME, leaveToTop, raiseErrorToUI, useNavDelay } from './utils';
 import { invoke } from "@tauri-apps/api";
@@ -205,7 +205,11 @@ const renameMachine = setup({
         | { type: "DESELECT_ALL" }
         | { type: "COMMIT_RENAME_GROUPS" }
         | { type: "RENAME_COMMIT_SUCCESS", payload: string }
-        | { type: "RENAME_COMMIT_DONE" },
+        | { type: "RENAME_COMMIT_DONE" }
+        | { type: "NAV_RENAME" }
+        | { type: "NAV_UNCERTAIN" }
+        | { type: "NAV_UNSUPPORTED" }
+        | { type: "NAV_ALL" },
         input: {
             fileGroups: FileGroupType[],
             source: Path,
@@ -284,87 +288,122 @@ const renameMachine = setup({
                 selected_count: 0,
             }
         },
-        initial: 'exifing',
+        type: 'parallel',
         states: {
-            exifing: {
-                initial: "start",
-                invoke: {
-                    src: tauriExifDataListener,
-                },
+            view: {
+                initial: 'exifing',
                 states: {
-                    start: {
+                    exifing: {
+                        initial: "start",
                         invoke: {
-                            src: tauriExifCollectCommand,
-                            onDone: {
-                                target: "loading",
+                            src: tauriExifDataListener,
+                        },
+                        states: {
+                            start: {
+                                invoke: {
+                                    src: tauriExifCollectCommand,
+                                    onDone: {
+                                        target: "loading",
+                                    },
+                                    onError: {
+                                        actions: raiseErrorToUI
+                                    }
+                                },
                             },
-                            onError: {
-                                actions: raiseErrorToUI
-                            }
+                            loading: {
+                                on: {
+                                    EXIF_FILE_DATA: {
+                                        actions: sendTo(
+                                            // The "key" is the key of the item machine. If it changes,
+                                            // make sure to change it as well.
+                                            ({ event }) => event.payload.key,
+                                            ({ event }) => ({ type: "SET_NEXT_STEM", payload: event.payload })
+                                        ),
+                                    },
+                                    EXIF_COLLECTION_DONE: '#rename-machine.view.ready'
+                                }
+                            },
                         },
                     },
-                    loading: {
+                    ready: {
                         on: {
-                            EXIF_FILE_DATA: {
-                                actions: sendTo(
-                                    // The "key" is the key of the item machine. If it changes,
-                                    // make sure to change it as well.
-                                    ({ event }) => event.payload.key,
-                                    ({ event }) => ({ type: "SET_NEXT_STEM", payload: event.payload })
-                                ),
-                            },
-                            EXIF_COLLECTION_DONE: '#rename-machine.ready'
+                            COMMIT_RENAME_GROUPS: 'committing',
                         }
                     },
-                },
-            },
-            ready: {
-                on: {
-                    COMMIT_RENAME_GROUPS: 'committing',
-                }
-            },
-            committing: {
-                initial: "start",
-                invoke: {
-                    src: "tauriCommitRenameDoneListener",
-                },
-                states: {
-                    start: {
+                    committing: {
+                        initial: "start",
                         invoke: {
-                            src: 'tauriCommitRenameGroupsCommand',
-                            onDone: "loading",
-                            onError: {
-                                actions: raiseErrorToUI,
-                            },
-                            input: ({ context }) => {
-                                const toRename = context.items
-                                    .filter(x => x.getSnapshot().context.selected)
-                                    .map(x => x.getSnapshot().context.file.key)
-                                console.log("keys to rename", toRename);
-                                return toRename
-                            }
+                            src: "tauriCommitRenameDoneListener",
                         },
-                    },
-                    loading: {
-                        on: {
-                            RENAME_COMMIT_SUCCESS: {
-                                actions: [(data) => console.log("we are here", data),
-                                sendTo(({ event }) => event.payload, { type: "RENAME_COMMIT_SUCCESS_FROM_PARENT" })
-                                ]
+                        states: {
+                            start: {
+                                invoke: {
+                                    src: 'tauriCommitRenameGroupsCommand',
+                                    onDone: "loading",
+                                    onError: {
+                                        actions: raiseErrorToUI,
+                                    },
+                                    input: ({ context }) => {
+                                        const toRename = context.items
+                                            .filter(x => x.getSnapshot().context.selected)
+                                            .map(x => x.getSnapshot().context.file.key)
+                                        return toRename
+                                    }
+                                },
                             },
-                            RENAME_COMMIT_DONE: {
-                                target: "#rename-machine.done"
-                            }
+                            loading: {
+                                on: {
+                                    RENAME_COMMIT_SUCCESS: {
+                                        actions: [(data) => console.log("TODO: we are here", data),
+                                        sendTo(({ event }) => event.payload, { type: "RENAME_COMMIT_SUCCESS_FROM_PARENT" })
+                                        ]
+                                    },
+                                    RENAME_COMMIT_DONE: {
+                                        target: "#rename-machine.view.done"
+                                    }
+                                }
+                            },
+                        },
+                        on: {
+                            TOGGLE_SELECTION_ALL: {},
+                            RESET_TO_INTRO: {}
                         }
                     },
-                },
-                on: {
-                    TOGGLE_SELECTION_ALL: {},
-                    RESET_TO_INTRO: {}
+                    done: {
+                        entry: () => toast("Done renaming", { type: "success" })
+                    }
                 }
             },
-            done: {
-                entry: () => toast("Done renaming", { type: "success" })
+            nav: {
+                initial: 'toRename',
+                states: {
+                    toRename: {
+                        on: {
+                            NAV_RENAME: {},
+                        }
+                    },
+                    uncertain: {
+                        on: {
+                            NAV_UNCERTAIN: {},
+                        }
+                    },
+                    unsupported: {
+                        on: {
+                            NAV_UNSUPPORTED: {},
+                        }
+                    },
+                    all: {
+                        on: {
+                            NAV_ALL: {},
+                        }
+                    }
+                },
+                on: {
+                    NAV_RENAME: '.toRename',
+                    NAV_UNCERTAIN: '.uncertain',
+                    NAV_UNSUPPORTED: '.unsupported',
+                    NAV_ALL: '.all',
+                }
             }
         },
         on: {
@@ -581,11 +620,17 @@ function Rename({ actorRef }: Props) {
     const items = useSelector(actorRef, (state) => state.context.items);
     const unsupported = useSelector(actorRef, state => state.context.unsupported);
     const uncertain = useSelector(actorRef, state => state.context.uncertain);
-    const isExifing = useSelector(actorRef, state => state.matches("exifing"));
-    const isReady = useSelector(actorRef, state => state.matches("ready"));
+    const isExifing = useSelector(actorRef, state => state.matches({ view: "exifing" }));
+    const isReady = useSelector(actorRef, state => state.matches({ view: "ready" }));
     // const isSelectedAll = useSelector(actorRef, state => state.context.selected_all);
     const numbOfItemsToRename = useSelector(actorRef, state => state.context.selected_count);
     const [isLeaving, navDelay] = useNavDelay(LEAVE_TIME - 100);
+    const nav = useSelector(actorRef, state => ({
+        toRename: state.matches({ nav: "toRename" }),
+        uncertain: state.matches({ nav: "uncertain" }),
+        unsupported: state.matches({ nav: "unsupported" }),
+        all: state.matches({ nav: "all" }),
+    }))
 
 
     return (
@@ -605,28 +650,40 @@ function Rename({ actorRef }: Props) {
                         style={isLeaving ? leaveToTop({ duration: 140 }) : enterFromTop()}
                     >
                         <nav>
-                            <button className={clsx("relative px-4 py-1.5 rounded-md font-medium text-sm mr-2", {
-                                "before:block before:absolute before:h-full before:w-1.5 before:bg-green-500 before:left-0 before:top-0 before:rounded-s-md bg-white text-black": true,
-                                "text-neutral-300": false
-                            })}>
+                            <button
+                                className={clsx("relative px-4 py-1.5 rounded-md font-medium text-sm mr-2", {
+                                    "before:block before:absolute before:h-full before:w-1.5 before:bg-green-500 before:left-0 before:top-0 before:rounded-s-md bg-white text-black": nav.toRename,
+                                    "text-neutral-300 hover:text-neutral-400": !nav.toRename
+                                })}
+                                onClick={() => actorRef.send({ type: "NAV_RENAME" })}
+                            >
                                 To Rename <span className="ml-1 text-neutral-500 text-xs">{items.length}</span>
                             </button>
-                            <button className={clsx("relative px-4 py-1.5 rounded-md font-medium text-sm mr-2 text-neutral-300", {
-                                "before:block before:absolute before:h-full before:w-1.5 before:bg-green-500 before:left-0 before:top-0 before:rounded-s-md bg-white text-black": false,
-                                "text-neutral-300": true
-                            })}>
+                            <button
+                                className={clsx("relative px-4 py-1.5 rounded-md font-medium text-sm mr-2", {
+                                    "before:block before:absolute before:h-full before:w-1.5 before:bg-green-500 before:left-0 before:top-0 before:rounded-s-md bg-white text-black": nav.uncertain,
+                                    "text-neutral-300 hover:text-neutral-400": !nav.uncertain
+                                })}
+                                onClick={() => actorRef.send({ type: "NAV_UNCERTAIN" })}
+                            >
                                 Uncertain <span className="ml-1 text-neutral-500 text-xs">{uncertain.length}</span>
                             </button>
-                            <button className={clsx("relative px-4 py-1.5 rounded-md font-medium text-sm mr-2 text-neutral-300", {
-                                "before:block before:absolute before:h-full before:w-1.5 before:bg-green-500 before:left-0 before:top-0 before:rounded-s-md bg-white text-black": false,
-                                "text-neutral-300": true
-                            })}>
+                            <button
+                                className={clsx("relative px-4 py-1.5 rounded-md font-medium text-sm mr-2", {
+                                    "before:block before:absolute before:h-full before:w-1.5 before:bg-green-500 before:left-0 before:top-0 before:rounded-s-md bg-white text-black": nav.unsupported,
+                                    "text-neutral-300 hover:text-neutral-400": !nav.unsupported
+                                })}
+                                onClick={() => actorRef.send({ type: "NAV_UNSUPPORTED" })}
+                            >
                                 Unsupported <span className="ml-1 text-neutral-500 text-xs">{unsupported.length}</span>
                             </button>
-                            <button className={clsx("relative px-4 py-1.5 rounded-md font-medium text-sm mr-2 text-neutral-300", {
-                                "before:block before:absolute before:h-full before:w-1.5 before:bg-green-500 before:left-0 before:top-0 before:rounded-s-md bg-white text-black": false,
-                                "text-neutral-300": true
-                            })}>
+                            <button
+                                className={clsx("relative px-4 py-1.5 rounded-md font-medium text-sm mr-2", {
+                                    "before:block before:absolute before:h-full before:w-1.5 before:bg-green-500 before:left-0 before:top-0 before:rounded-s-md bg-white text-black": nav.all,
+                                    "text-neutral-300 hover:text-neutral-400": !nav.all
+                                })}
+                                onClick={() => actorRef.send({ type: "NAV_ALL" })}
+                            >
                                 All files <span className="ml-1 text-neutral-500 text-xs">{items.length + uncertain.length + unsupported.length}</span>
                             </button>
                         </nav>
@@ -639,6 +696,26 @@ function Rename({ actorRef }: Props) {
                         className="overflow-y-auto pb-32"
                         style={{ maxHeight: "calc(100vh - 13rem)" }}
                     >
+                    {nav.toRename ? (
+                        <>
+                        {items.map((item, index) => (
+                            <Item actorRef={item} key={index} />
+                        ))}
+                        </>
+                    ) : nav.uncertain ? (
+                        <>
+                        {uncertain.map((item, index) => (
+                            <UncertainItem actorRef={item} key={`un-${index}`} />
+                        ))}
+                        </>
+                    ) : nav.unsupported ? (
+                        <>
+                        {unsupported.map((item, index) => (
+                            <UnsupportedItem actorRef={item} key={`u-${index}`} />
+                        ))}
+                        </>
+                    ) : nav.all ? (
+                        <>
                         {items.map((item, index) => (
                             <Item actorRef={item} key={index} />
                         ))}
@@ -648,6 +725,8 @@ function Rename({ actorRef }: Props) {
                         {unsupported.map((item, index) => (
                             <UnsupportedItem actorRef={item} key={`u-${index}`} />
                         ))}
+                        </>
+                    ) : null}
                     </div>
                     <div
                         className="absolute z-10 bottom-8 flex items-center p-3 px-4 rounded-lg shadow-lg bg-neutral-200 dark:bg-neutral-800"
