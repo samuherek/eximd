@@ -109,7 +109,7 @@ struct DropView {
 
 #[derive(Debug, serde::Deserialize)]
 struct DropInputPayload {
-    items: Vec<String>,
+    items: String,
 }
 
 #[derive(Debug, serde::Serialize, Clone)]
@@ -331,20 +331,15 @@ async fn drop_input_cmd(
     state: tauri::State<'_, Arc<AppState>>,
     payload: DropInputPayload,
 ) -> Result<PathBuf, String> {
-    if payload.items.len() != 1 {
-        return Err("You need to provide one path.".into());
+    let input_path = std::path::Path::new(&payload.items);
+
+    if input_path.exists() {
+        let mut source = state.source.lock().unwrap();
+        *source = input_path.to_path_buf().into();
+        Ok(input_path.to_path_buf())
+    } else {
+        Err("Provided path does not seem to exist".to_string())
     }
-
-    let input_path = payload
-        .items
-        .get(0)
-        .map(std::path::Path::new)
-        .ok_or_else(|| "Invalid path to the resources")?;
-
-    let mut source = state.source.lock().unwrap();
-    *source = input_path.to_path_buf().into();
-
-    Ok(input_path.to_path_buf())
 }
 
 #[tauri::command]

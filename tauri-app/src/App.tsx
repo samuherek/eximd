@@ -1,13 +1,12 @@
 import "./App.css";
-import { useState, useEffect } from 'react';
-import { assign, setup } from "xstate";
+import { ActorRefFrom, assign, fromCallback, fromPromise, sendParent, setup } from "xstate";
 import { useMachine } from "@xstate/react";
-import { introMachine } from './Intro';
 import { renameMachine } from './Rename';
-import Intro from "./Intro";
 import Rename from "./Rename";
-import { getAnimationDelayStyle } from "./utils";
-import clsx from 'clsx';
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api";
+import { enterFromDown, enterFromTop, LEAVE_TIME, leaveToDown, leaveToTop, raiseErrorToUI, useNavDelay } from "./utils";
+import { toast } from "react-toastify";
 
 
 // ROUTES 
@@ -15,7 +14,7 @@ import clsx from 'clsx';
 // 1. rename
 // 2. duplicate
 //
-// = RENAME
+// = RENAME{
 // 1. collecting files -> loading spinner (we ignore the chanks and wait for all)
 // 2. done collected 
 //  - see as a tree to toggle
@@ -26,6 +25,101 @@ import clsx from 'clsx';
 //
 //
 
+const dropListener = fromCallback(({ sendBack }) => {
+    const unlistenDrop = listen<string[]>('tauri://file-drop', async (event) => {
+        sendBack({ type: "DROPPED_INPUT", payload: event.payload });
+    });
+    return () => {
+        unlistenDrop.then((fn) => fn());
+    }
+});
+
+const dropInputCmd = fromPromise<string, string | null>(async ({ input }) => {
+    console.assert(input !== null, "DropInputCommand got null for the drop source");
+    const res = await invoke<string>("drop_input_cmd", { payload: { items: input } });
+    return res;
+});
+
+const dropMachine = setup({
+    types: {} as {
+        context: {
+            source: null | string,
+            validated_source: null | string
+        },
+        events: { type: "DROPPED_INPUT", payload: string[] }
+        | { type: "CANCEL" },
+        output: {
+            validated_source: string
+        }
+
+    },
+    actors: {
+        dropListener,
+        dropInputCmd
+    },
+}).createMachine({
+    id: 'drop-machine',
+    context: {
+        source: null,
+        validated_source: null,
+    },
+    invoke: {
+        src: "dropListener",
+    },
+    initial: 'idle',
+    output: ({ context }) => {
+        console.assert(!!context.validated_source, "At this point, we are certain we have the valid path");
+        return {
+            validated_source: context.validated_source!
+        }
+    },
+    states: {
+        idle: {
+            on: {
+                DROPPED_INPUT: [{
+                    guard: ({ event }) => {
+                        return event.payload.length === 1;
+                    },
+                    target: 'loading',
+                    actions: assign({
+                        source: ({ event }) => {
+                            console.assert(event.payload.length === 1, "We got incorrect items in the drop source");
+                            return event.payload[0];
+                        }
+                    })
+                },
+                {
+                    actions: () => {
+                        toast("Please drop only one path", { type: "error" })
+                    }
+                }]
+            }
+        },
+        loading: {
+            invoke: {
+                src: 'dropInputCmd',
+                input: ({ context }) => context.source,
+                onDone: {
+                    target: 'done',
+                    actions: assign({
+                        validated_source: ({ event }) => event.output,
+                    })
+                },
+                onError: {
+                    actions: raiseErrorToUI,
+                }
+            },
+        },
+        done: {
+            type: 'final'
+        },
+    },
+    on: {
+        CANCEL: {
+            actions: sendParent({ type: "NAV_INTRO" })
+        }
+    },
+});
 
 
 const appMachine = setup({
@@ -35,16 +129,12 @@ const appMachine = setup({
         },
         event: { type: "NAV_RENAME", paylaod: string }
         | { type: "NAV_DEDUPLICATE", payload: string }
-        | { type: "RESET_TO_INTRO" }
+        | { type: "NAV_INTRO" }
     },
-    actions: {
-        setSource: assign({
-            source: ({ event }) => event.input,
-        })
-    },
+    actions: {},
     actors: {
-        introMachine,
         renameMachine,
+        dropMachine,
     }
 }).createMachine({
     id: "app-machine",
@@ -55,27 +145,30 @@ const appMachine = setup({
     initial: "intro",
     states: {
         intro: {
-            invoke: {
-                src: 'introMachine',
-                id: 'introMachine'
-            },
             on: {
-                NAV_RENAME: {
-                    target: 'rename',
-                    actions: assign({
-                        source: ({ event }) => event.payload
-                    })
-                },
-                NAV_DEDUPLICATE: {
-                    target: 'deduplicate'
-                }
-            }
+                NAV_RENAME: 'rename',
+                NAV_DEDUPLICATE: 'deduplicate',
+            },
         },
         rename: {
             initial: "drop",
             states: {
-                drop: {},
-                interact: {
+                drop: {
+                    invoke: {
+                        src: 'dropMachine',
+                        id: 'dropMachine',
+                        onDone: {
+                            target: 'page',
+                            actions: assign({
+                                source: ({ event }) => event.output.validated_source
+                            })
+                        },
+                        onError: {
+                            actions: raiseErrorToUI
+                        }
+                    },
+                },
+                page: {
                     invoke: {
                         src: 'renameMachine',
                         id: 'renameMachine',
@@ -84,53 +177,32 @@ const appMachine = setup({
                 }
             },
             on: {
-                RESET_TO_INTRO: 'intro'
+                NAV_INTRO: 'intro'
             }
         },
         deduplicate: {
             on: {
-                RESET_TO_INTRO: 'intro'
+                NAV_INTRO: 'intro'
             }
         }
-    }
+    },
 });
 
-function useNavDelay(delay = 600) {
-    const [isLeaving, setIsLeaving] = useState(false);
-
-    function handleNavigate(nav: () => void) {
-        setIsLeaving(true);
-        setTimeout(() => nav(), delay);
-    }
-
-    return [isLeaving, handleNavigate] as const;
-}
 
 function Selection({ onRename, onDuplicates }: {
     onRename: () => void,
     onDuplicates: () => void
 }) {
-    const [isLeaving, navDelay] = useNavDelay(400);
+    const [isLeaving, navDelay] = useNavDelay(LEAVE_TIME - 100);
 
     return (
         <div className="h-full flex flex-col items-center justify-around">
-            <div
-                className={clsx({
-                    "leave-to-top": isLeaving,
-                    "enter-from-top": !isLeaving,
-                })}
-                style={getAnimationDelayStyle(isLeaving ? 5 : 0)}
-            >
+            <div style={isLeaving ? leaveToTop({ duration: 140 }) : enterFromTop()}>
                 <h1 className="py-8 text-4xl font-medium text-center drop-shadow-[0_2px_4px_rgba(0,0,0,0.25)]">
                     Easy Medic for your Media files
                 </h1>
             </div>
-            <div className={clsx("flex justify-center", {
-                "leave-to-down": isLeaving,
-                "enter-from-down": !isLeaving,
-            })}
-                style={getAnimationDelayStyle(isLeaving ? 0 : 3)}
-            >
+            <div style={isLeaving ? leaveToDown({ duration: 100 }) : enterFromDown()}>
                 <button
                     onClick={() => navDelay(onRename)}
                     className="px-24 py-20 group mr-[8vw] translate-y-0 hover:-translate-y-2 shadow-2xl hover:shadow-green-800/10 rounded-[52px] bg-neutral-900 hover:bg-neutral-800 transition-all ease-in-out duration-150">
@@ -150,41 +222,24 @@ function Selection({ onRename, onDuplicates }: {
                     <span className="text-xl group-hover:translate-x-0.5">Find duplicates</span>
                 </button>
             </div>
-            <div
-                className={clsx("py-8", {
-                    'leave-to-down': isLeaving,
-                    "enter-from-down": !isLeaving,
-                })}
-                style={getAnimationDelayStyle(isLeaving ? 5 : 0)}
-            >
+            <div style={isLeaving ? leaveToDown({ duration: 140 }) : enterFromDown()}>
                 <p className="text-neutral-500">Make sure to learn more about how files are handeled. <span className="text-green-500">Learn more</span></p>
             </div>
         </div>
     )
 }
 
-function Drop({ onCancel }: { onCancel: () => void }) {
-    const [isLeaving, navDelay] = useNavDelay(400);
+function Drop({ actorRef }: { actorRef: ActorRefFrom<typeof dropMachine> }) {
+    const [isLeaving, navDelay] = useNavDelay(LEAVE_TIME);
 
     return (
         <div className="h-full flex flex-col items-center justify-around">
-            <div
-                className={clsx({
-                    "leave-to-top": isLeaving,
-                    "enter-from-top": !isLeaving,
-                })}
-                style={getAnimationDelayStyle(isLeaving ? 5 : 0)}
-            >
+            <div style={isLeaving ? leaveToTop() : enterFromTop({ delay: 160 })}>
                 <h1 className="py-8 text-4xl font-medium text-center drop-shadow-[0_2px_4px_rgba(0,0,0,0.25)]">
                     Rename media files
                 </h1>
             </div>
-            <div className={clsx("flex justify-center", {
-                "leave-to-down": isLeaving,
-                "enter-from-down": !isLeaving,
-            })}
-                style={getAnimationDelayStyle(isLeaving ? 0 : 3)}
-            >
+            <div style={isLeaving ? leaveToDown({ duration: 100 }) : enterFromDown()}>
                 <button
                     className="w-[84vw] py-24 border-4 border-dashed border-green-500 group shadow-2xl translate-y-0 hover:-translate-y-2 hover:shadow-green-800/10 rounded-[52px] bg-neutral-900 hover:bg-neutral-800 transition-all ease-in-out duration-150">
                     <svg className="mb-6 mx-auto w-40 h-40 translate-x-2 scale-100 group-hover:scale-105 transition-all ease-in-out duration-150" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 214 190" >
@@ -195,14 +250,9 @@ function Drop({ onCancel }: { onCancel: () => void }) {
                     <span className="text-sm text-neutral-500">(directory or a file)</span>
                 </button>
             </div>
-            <div className={clsx("py-", {
-                'leave-to-down': isLeaving,
-                "enter-from-down": !isLeaving,
-            })}
-                style={getAnimationDelayStyle(isLeaving ? 5 : 0)}
-            >
+            <div style={isLeaving ? leaveToDown() : enterFromDown({ delay: 140 })}>
                 <button
-                    onClick={() => navDelay(onCancel)}
+                    onClick={() => navDelay(() => actorRef.send({ type: "CANCEL" }))}
                     className="text-neutral-500 hover:text-green-500 px-4 py-2">
                     Cancel
                 </button>
@@ -223,9 +273,8 @@ function App() {
         }
     });
 
-    console.log("---------")
-    console.log(state);
-    // console.log("machine state::: ", state);
+    // console.log("---------")
+    // console.log(state);
 
     return (
         <div className="h-screen overflow-hidden">
@@ -235,15 +284,18 @@ function App() {
                     onDuplicates={() => send({ type: "NAV_DEDUPLICATE" })}
                 />
             ) : state.matches({ rename: "drop" }) ? (
-                <Drop onCancel={() => send({ type: "RESET_TO_INTRO" })} />
-            ) : state.matches("rename") ? (
-                <Rename actorRef={state.children.renameMachine as any} />
+                <Drop
+                    // @ts-ignore
+                    actorRef={state.children.dropMachine}
+                />
+            ) : state.matches({ rename: "page" }) ? (
+                <Rename
+                    // @ts-ignore
+                    actorRef={state.children.renameMachine}
+                />
             ) : undefined}
         </div >
     );
 }
-// <Intro actorRef={state.children.introMachine as any} />
-
-// <svg style={{ fill: "currentColor" }} className="w-4 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512zM369 209L241 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L335 175c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9z" /></svg>
 
 export default App;
