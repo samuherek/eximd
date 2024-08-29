@@ -768,7 +768,7 @@ function Rename({ actorRef }: Props) {
                                     </svg>
                                 </div>
                                 <div className="mb-16">
-                                    <p className="mb-6 text-lg">Succesfully renamed <span className="font-bold">{doneCount.fileCount}</span> file in <span className="font-bold">{doneCount.groupCount}</span> groups</p>
+                                    <p className="mb-6 text-lg">Succesfully renamed <span className="font-bold">{doneCount.fileCount}</span> files in <span className="font-bold">{doneCount.groupCount}</span> groups</p>
                                 </div>
                                 <div>
                                     <button
