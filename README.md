@@ -66,3 +66,4 @@ If you fency a cli app instead. You can download it with **Homebrew**
 [ ] Fix the extension for the rename exmaple
 [ ] Fix the GA to bundel and sign the app for macos
 [ ] Make available for other platforms if asked for. 
+[ ] autoupdate 
