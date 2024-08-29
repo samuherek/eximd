@@ -2,7 +2,7 @@
 
 # ExiMd
 
-> Simple an effective sanitizer of your media file names that respect the extra related files. 
+**Simple an effective media files sanitizer that respect related edit and config files.**
 
 
 https://github.com/user-attachments/assets/1ffccf46-0295-4959-bef9-ddf28c93b62c
