@@ -2,10 +2,10 @@
 
 # ExiMd
 
-> Simple an effective sanitizer of your media file names even when it's a live photo or it has extra edit files with it. 
+> Simple an effective sanitizer of your media file names that respect the extra related files. 
 
 
-https://github.com/user-attachments/assets/3b496e4f-d95a-4bc4-bc98-0e2f7534afd1
+https://github.com/user-attachments/assets/1ffccf46-0295-4959-bef9-ddf28c93b62c
 
 
 </div>
