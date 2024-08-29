@@ -119,6 +119,7 @@ struct ExifFileData {
     src: PathBuf,
     src_next: PathBuf,
     file_name_next: String,
+    ext: String,
 }
 
 impl ExifFileData {
@@ -128,8 +129,9 @@ impl ExifFileData {
             src: item.src.value().to_owned(),
             src_next: next_src.clone(),
             file_name_next: item
-                .next_file_stem_from_exif()
-                .unwrap_or("ERROR".to_string()),
+            .next_file_stem_from_exif()
+            .unwrap_or("ERROR".to_string()),
+            ext: item.ext.value().into()
         }
     }
 }

@@ -25,6 +25,7 @@ type ExifFileDataEvent = {
     src: string,
     src_next: string,
     file_name_next: string,
+    ext: string,
 }
 
 const tauriExifDataListener = fromCallback(({ sendBack }) => {
@@ -33,13 +34,15 @@ const tauriExifDataListener = fromCallback(({ sendBack }) => {
         src: string,
         src_next: string,
         file_name_next: string
+        ext: string,
     }>("EXIF_FILE_DATA", (data) => {
         sendBack({
             type: "EXIF_FILE_DATA", payload: {
                 key: data.payload.key,
                 src: data.payload.src,
                 src_next: data.payload.src_next,
-                file_name_next: data.payload.file_name_next
+                file_name_next: data.payload.file_name_next,
+                ext: data.payload.ext
             } as ExifFileDataEvent
         })
     })
@@ -56,14 +59,16 @@ const tauriCommitRenameDoneListener = fromCallback(({ sendBack }) => {
     const unlisten = listen<string>("RENAME_COMMIT_SUCCESS_MSG", (data) => {
         sendBack({ type: "RENAME_COMMIT_SUCCESS", payload: data.payload })
     });
-    const doneUnlisten = listen<{ 
-        group_count: number, 
-        file_count: number 
+    const doneUnlisten = listen<{
+        group_count: number,
+        file_count: number
     }>("RENAME_COMMIT_DONE_MSG", (data) => {
-        sendBack({ type: "RENAME_COMMIT_DONE", payload: {
+        sendBack({
+            type: "RENAME_COMMIT_DONE", payload: {
                 groupCount: data.payload.group_count,
                 fileCount: data.payload.file_count
-        }});
+            }
+        });
     });
     return () => {
         unlisten.then(fn => fn());
@@ -105,6 +110,7 @@ const supportedItemMachine = setup({
             selected: boolean,
             src_next: string | null,
             file_name_next: string | null
+            ext: string | null
         },
         input: FileGroupToDisplay,
         events: { type: "DESELECT_ITEM" }
@@ -126,6 +132,7 @@ const supportedItemMachine = setup({
         selected: true,
         src_next: null,
         file_name_next: null,
+        ext: null
     }),
     on: {
         DESELECT_ITEM: {
@@ -166,6 +173,7 @@ const supportedItemMachine = setup({
                     actions: assign({
                         src_next: ({ event }) => event.payload.src_next,
                         file_name_next: ({ event }) => event.payload.file_name_next,
+                        ext: ({ event }) => event.payload.ext,
                     })
                 }
             }
@@ -495,7 +503,7 @@ function FileGroupVideo({ item }: { item: SrcFile }) {
                 <path className="fa-secondary" opacity=".4" d="M0 288c0 17.7 14.3 32 32 32l32 0 0 128c0 35.3 28.7 64 64 64l256 0c35.3 0 64-28.7 64-64l0-16 0-96 0-16c0-35.3-28.7-64-64-64l-32 0-224 0-64 0-32 0c-17.7 0-32 14.3-32 32z" />
                 <path className="fa-primary" d="M128 64a64 64 0 1 0 0 128 64 64 0 1 0 0-128zM352 256l-224 0C57.3 256 0 198.7 0 128S57.3 0 128 0c48.2 0 90.2 26.6 112 66C261.8 26.6 303.8 0 352 0c70.7 0 128 57.3 128 128s-57.3 128-128 128zm0-192a64 64 0 1 0 0 128 64 64 0 1 0 0-128zM558.3 259.4c10.8 5.4 17.7 16.5 17.7 28.6l0 192c0 12.1-6.8 23.2-17.7 28.6s-23.8 4.3-33.5-3l-64-48L448 448l0-16 0-96 0-16 12.8-9.6 64-48c9.7-7.3 22.7-8.4 33.5-3z" />
             </svg>
-            <span>{item.stem}.{item.ext}</span>
+            <span>{item.stem}<span className="ml-1 text-neutral-500">.{item.ext}</span></span>
         </>
     )
 }
@@ -504,7 +512,7 @@ function FileGroupLiveImage({ item }: { item: SrcFile }) {
     return (
         <>
             <svg style={{ fill: "currentColor" }} className="w-6 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path opacity=".4" d="M0 96C0 60.7 28.7 32 64 32l384 0c35.3 0 64 28.7 64 64l0 320c0 35.3-28.7 64-64 64L64 480c-35.3 0-64-28.7-64-64L0 96zm64 48a48 48 0 1 0 96 0 48 48 0 1 0 -96 0zm2.4 258.4c4 8.3 12.4 13.6 21.6 13.6l96 0 32 0 208 0c8.9 0 17.1-4.9 21.2-12.8s3.6-17.4-1.4-24.7l-120-176c-4.5-6.6-11.9-10.5-19.8-10.5s-15.4 3.9-19.8 10.5l-87 127.6L170.7 297c-4.6-5.7-11.5-9-18.7-9s-14.2 3.3-18.7 9l-64 80c-5.8 7.2-6.9 17.1-2.9 25.4z" /><path className="fa-primary" d="M323.8 202.5c-4.5-6.6-11.9-10.5-19.8-10.5s-15.4 3.9-19.8 10.5l-87 127.6L170.7 297c-4.6-5.7-11.5-9-18.7-9s-14.2 3.3-18.7 9l-64 80c-5.8 7.2-6.9 17.1-2.9 25.4s12.4 13.6 21.6 13.6l96 0 32 0 208 0c8.9 0 17.1-4.9 21.2-12.8s3.6-17.4-1.4-24.7l-120-176z" /></svg>
-            <span>{item.stem}.{item.ext}</span>
+            <span>{item.stem}<span className="ml-1 text-neutral-500">.{item.ext}</span></span>
         </>
     )
 }
@@ -513,7 +521,7 @@ function FileGroupImage({ item }: { item: SrcFile }) {
     return (
         <>
             <svg style={{ fill: "currentColor" }} className="w-6 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path opacity=".4" d="M0 96C0 60.7 28.7 32 64 32l384 0c35.3 0 64 28.7 64 64l0 320c0 35.3-28.7 64-64 64L64 480c-35.3 0-64-28.7-64-64L0 96zm64 48a48 48 0 1 0 96 0 48 48 0 1 0 -96 0zm2.4 258.4c4 8.3 12.4 13.6 21.6 13.6l96 0 32 0 208 0c8.9 0 17.1-4.9 21.2-12.8s3.6-17.4-1.4-24.7l-120-176c-4.5-6.6-11.9-10.5-19.8-10.5s-15.4 3.9-19.8 10.5l-87 127.6L170.7 297c-4.6-5.7-11.5-9-18.7-9s-14.2 3.3-18.7 9l-64 80c-5.8 7.2-6.9 17.1-2.9 25.4z" /><path className="fa-primary" d="M323.8 202.5c-4.5-6.6-11.9-10.5-19.8-10.5s-15.4 3.9-19.8 10.5l-87 127.6L170.7 297c-4.6-5.7-11.5-9-18.7-9s-14.2 3.3-18.7 9l-64 80c-5.8 7.2-6.9 17.1-2.9 25.4s12.4 13.6 21.6 13.6l96 0 32 0 208 0c8.9 0 17.1-4.9 21.2-12.8s3.6-17.4-1.4-24.7l-120-176z" /></svg>
-            <span>{item.stem}.{item.ext}</span>
+            <span>{item.stem}<span className="ml-1 text-neutral-500">.{item.ext}</span></span>
         </>
     )
 }
@@ -554,12 +562,16 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
                 ) : (
                     <span>Error::::</span>
                 )}
-                <div className="ml-4 flex items-center">
+                <div className="ml-5 flex items-center">
                     {item.file.type === "LiveImage" && item.file.video ? (
-                        <span className="flex text-neutral-500">< svg style={{ fill: "currentColor" }} className="w-4 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><path d="M0 128C0 92.7 28.7 64 64 64l256 0c35.3 0 64 28.7 64 64l0 256c0 35.3-28.7 64-64 64L64 448c-35.3 0-64-28.7-64-64L0 128zM559.1 99.8c10.4 5.6 16.9 16.4 16.9 28.2l0 256c0 11.8-6.5 22.6-16.9 28.2s-23 5-32.9-1.6l-96-64L416 337.1l0-17.1 0-128 0-17.1 14.2-9.5 96-64c9.8-6.5 22.4-7.2 32.9-1.6z" /></svg></span>
+                        <span className="flex text-neutral-500">
+                            <svg style={{ fill: "currentColor" }} className="w-4 mr-4" xmlns="http://www.w3.org/2000/svg" width="16" height="14" viewBox="0 0 16 14" fill="none">
+                                <path d="M1.77778 3.0625C1.53333 3.0625 1.33333 3.25937 1.33333 3.5V10.5C1.33333 10.7406 1.53333 10.9375 1.77778 10.9375H8.88889C9.13333 10.9375 9.33333 10.7406 9.33333 10.5V3.5C9.33333 3.25937 9.13333 3.0625 8.88889 3.0625H1.77778ZM0 3.5C0 2.53477 0.797222 1.75 1.77778 1.75H8.88889C9.86944 1.75 10.6667 2.53477 10.6667 3.5V4.40234V9.59766V10.5C10.6667 11.4652 9.86944 12.25 8.88889 12.25H1.77778C0.797222 12.25 0 11.4652 0 10.5V3.5ZM14.6667 9.93672V4.06602L11.5556 5.44141V4.00312L14.4528 2.7207C14.5944 2.65781 14.7472 2.625 14.9028 2.625C15.5083 2.625 16 3.10898 16 3.70508V10.2949C16 10.891 15.5083 11.375 14.9028 11.375C14.7472 11.375 14.5944 11.3422 14.4528 11.2793L11.5556 9.99687V8.55859L14.6667 9.93672Z" fill="#7E7E7E" />
+                            </svg>
+                        </span>
                     ) : null}
                     {item.file.config.map((config: any, i: number) => (
-                        <span key={i} className="mr-4 text-sm text-neutral-500">.{config.ext}</span>
+                        <span key={i} className="mr-4 text-sm text-neutral-500">{config.ext}</span>
                     ))}
                 </div>
             </div>
@@ -567,7 +579,7 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
                 {!isExifing && item.file_name_next ? (
                     <div className="flex items-center">
                         <ArrowRight />
-                        <span className="ml-8">{item.file_name_next}</span>
+                        <span className="ml-8">{item.file_name_next}<span className="ml-1 text-neutral-500">.{item.ext}</span></span>
                     </div>
                 ) : null}
             </div>
@@ -590,12 +602,12 @@ function UnsupportedItem({ actorRef }: {
                     <span className="block bg-neutral-300 dark:bg-neutral-700 rounded-full ml-1 w-[10px] h-[10px] shadow"></span>
                 </div>
                 <svg className="ml-1 w-4 mr-4" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path className="fa-secondary" opacity=".4" d="M0 64L0 448c0 35.3 28.7 64 64 64l256 0c35.3 0 64-28.7 64-64l0-288-128 0c-17.7 0-32-14.3-32-32L224 0 64 0C28.7 0 0 28.7 0 64z" /><path className="fa-primary" d="M224 0L384 160H256c-17.7 0-32-14.3-32-32V0z" /></svg>
-                <span>{item.stem}.{item.ext}</span>
+                <span>{item.stem}<span className="ml-1 text-neutral-500">.{item.ext}</span></span>
             </div>
             <div className="flex whitespace-nowrap">
                 <div className="flex items-center">
                     <ArrowRight />
-                    <span className="ml-8">- - - - - - - - - - </span>
+                    <span className="ml-8 text-neutral-500">No media present</span>
                 </div>
             </div>
         </div>
@@ -623,15 +635,16 @@ function UncertainItem({ actorRef }: {
                 </div>
                 <svg className="ml-1 w-4 mr-4" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path className="fa-secondary" opacity=".4" d="M0 64L0 448c0 35.3 28.7 64 64 64l256 0c35.3 0 64-28.7 64-64l0-288-128 0c-17.7 0-32-14.3-32-32L224 0 64 0C28.7 0 0 28.7 0 64z" /><path className="fa-primary" d="M224 0L384 160H256c-17.7 0-32-14.3-32-32V0z" /></svg>
                 {item.primary.map(item => (
-                    <span className="mr-3" key={item.src}>{item.stem}.{item.ext}</span>
+                    <span className="mr-3" key={item.src}>{item.stem}<span className="ml-1 text-neutral-500">.{item.ext}</span></span>
                 ))}
                 {item.config.map(item => (
-                    <span className="mr-3" key={item.src}>{item.stem}.{item.ext}</span>
+                    <span className="mr-3" key={item.src}>{item.stem}<span className="ml-1 text-neutral-500">.{item.ext}</span></span>
                 ))}
             </div>
             <div className="flex whitespace-nowrap">
                 <div className="flex items-center">
                     <ArrowRight />
+                    <span className="ml-8 text-neutral-500">Unknown</span>
                 </div>
             </div>
         </div>
