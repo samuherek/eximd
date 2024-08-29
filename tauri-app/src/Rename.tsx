@@ -43,13 +43,8 @@ const tauriExifDataListener = fromCallback(({ sendBack }) => {
             } as ExifFileDataEvent
         })
     })
-    const doneUnlisten = listen<{ group_count: number, file_count: number }>("EXIF_COLLECTION_DONE", (data) => {
-        sendBack({
-            type: "EXIF_COLLECTION_DONE", payload: {
-                groupCount: data.payload.group_count,
-                fileCount: data.payload.file_count
-            }
-        });
+    const doneUnlisten = listen("EXIF_COLLECTION_DONE", () => {
+        sendBack({ type: "EXIF_COLLECTION_DONE" });
     });
     return () => {
         unlisten.then(fn => fn())
@@ -61,8 +56,14 @@ const tauriCommitRenameDoneListener = fromCallback(({ sendBack }) => {
     const unlisten = listen<string>("RENAME_COMMIT_SUCCESS_MSG", (data) => {
         sendBack({ type: "RENAME_COMMIT_SUCCESS", payload: data.payload })
     });
-    const doneUnlisten = listen("RENAME_COMMIT_DONE_MSG", () => {
-        sendBack({ type: "RENAME_COMMIT_DONE" });
+    const doneUnlisten = listen<{ 
+        group_count: number, 
+        file_count: number 
+    }>("RENAME_COMMIT_DONE_MSG", (data) => {
+        sendBack({ type: "RENAME_COMMIT_DONE", payload: {
+                groupCount: data.payload.group_count,
+                fileCount: data.payload.file_count
+        }});
     });
     return () => {
         unlisten.then(fn => fn());
@@ -155,7 +156,6 @@ const supportedItemMachine = setup({
         },
         RENAME_COMMIT_SUCCESS: {
             target: ".end",
-            actions: () => console.log("rename commit success item to done")
         }
     },
     states: {
@@ -171,19 +171,15 @@ const supportedItemMachine = setup({
             }
         },
         ready: {
-            exit: () => console.log("exit item ready"),
             on: {
                 RENAME_COMMIT_START: 'comitting',
             }
         },
-        comitting: {
-            exit: () => console.log("exit item comitting"),
-        },
+        comitting: {},
         end: {
-            enter: () => console.log("in done"),
             after: {
                 300: {
-                    actions: [() => console.log("in after 300 "), sendParent(({ context }) => ({
+                    actions: [sendParent(({ context }) => ({
                         type: "REMOVE_RENMAED_ITEM",
                         payload: context.file.key
                     }))]
@@ -209,14 +205,14 @@ const renameMachine = setup({
         events: { type: "TOGGLE_SELECTION_ALL" }
         | { type: "EXIF_FILE_DATA", payload: ExifFileDataEvent }
         | { type: "NAV_DROP_INPUT" }
-        | { type: "EXIF_COLLECTION_DONE", payload: { fileCount: number, groupCount: number } }
+        | { type: "EXIF_COLLECTION_DONE" }
         | { type: "SELECT_ITEM" }
         | { type: "DESELECT_ITEM" }
         | { type: "SELECT_ALL" }
         | { type: "DESELECT_ALL" }
         | { type: "COMMIT_RENAME_GROUPS" }
         | { type: "RENAME_COMMIT_SUCCESS", payload: string }
-        | { type: "RENAME_COMMIT_DONE" }
+        | { type: "RENAME_COMMIT_DONE", payload: { fileCount: number, groupCount: number } }
         | { type: "REMOVE_RENMAED_ITEM", payload: string }
         | { type: "NAV_RENAME" }
         | { type: "NAV_UNCERTAIN" }
@@ -334,13 +330,7 @@ const renameMachine = setup({
                                             ({ event }) => ({ type: "SET_NEXT_STEM", payload: event.payload })
                                         ),
                                     },
-                                    EXIF_COLLECTION_DONE: {
-                                        target: '#rename-machine.view.ready',
-                                        actions: assign({
-                                            renameFileCount: ({ event }) => event.payload.fileCount,
-                                            renameGroupCount: ({ event }) => event.payload.groupCount,
-                                        })
-                                    }
+                                    EXIF_COLLECTION_DONE: '#rename-machine.view.ready',
                                 }
                             },
                         },
@@ -382,9 +372,11 @@ const renameMachine = setup({
                                     RENAME_COMMIT_DONE: {
                                         target: "#rename-machine.view.done",
                                         actions: [
-                                            () => console.log("TODO: set how many have been removed"),
+                                            ({ event }) => console.log("TODO: set how many have been removed", event),
                                             assign({
                                                 items: [],
+                                                renameFileCount: ({ event }) => event.payload.fileCount,
+                                                renameGroupCount: ({ event }) => event.payload.groupCount,
                                             })
                                         ]
                                     }
@@ -658,10 +650,12 @@ function Rename({ actorRef }: Props) {
     const isCommitting = useSelector(actorRef, state => state.matches({ view: "committing" }));
     const isReady = useSelector(actorRef, state => state.matches({ view: "ready" }));
     const isDone = useSelector(actorRef, state => state.matches({ view: "done" }));
-    const doneCount = useSelector(actorRef, state => ({
-        fileCount: state.context.renameFileCount,
-        groupCount: state.context.renameGroupCount
-    }));
+    const doneCount = useSelector(actorRef, state => {
+        return {
+            fileCount: state.context.renameFileCount,
+            groupCount: state.context.renameGroupCount
+        }
+    });
 
     const [isLeaving, navDelay] = useNavDelay(LEAVE_TIME - 200);
     const nav = useSelector(actorRef, state => ({
