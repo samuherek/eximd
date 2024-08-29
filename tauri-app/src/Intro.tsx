@@ -107,7 +107,7 @@ const introMachine = setup({
 
 function Intro({ actorRef }: Props) {
     const rename = useSelector(actorRef, (state) => state.matches({ type: "rename" }));
-    const dedup = useSelector(actorRef, (state) => state.matches({ type: "dedup" }));
+    // const dedup = useSelector(actorRef, (state) => state.matches({ type: "dedup" }));
 
     const [{ isOver }, dropRef] = useDrop({
         accept: NativeTypes.FILE,

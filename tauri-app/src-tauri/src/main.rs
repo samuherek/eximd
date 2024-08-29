@@ -1,5 +1,6 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use eximd::config::FileSystem;
 use eximd::exif::{ExifFile, FileNameGroup, FileNameGroupKey};
 use eximd::file::FilePath;
 use serde::ser::SerializeStruct;
@@ -262,13 +263,35 @@ struct CommitRenamePayload {
     items: Vec<FileNameGroupKey>,
 }
 
+pub struct TempFileSystem {}
+
+impl TempFileSystem {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl FileSystem for TempFileSystem {
+    fn rename(&self, prev: &Path, _next: &Path) -> std::io::Result<()> {
+        println!("renaming {:?}", prev);
+        Ok(())
+    }
+}
+
+#[derive(Debug, serde::Serialize, Clone)]
+struct RenameCounts {
+    group_count: usize,
+    file_count: usize,
+}
+
 #[tauri::command]
 async fn commit_rename_groups_cmd(
     state: tauri::State<'_, Arc<AppState>>,
     window: Window,
     payload: CommitRenamePayload,
 ) -> Result<(), String> {
-    let fs = eximd::config::RealFileSystem::new(&eximd::config::RunType::Exec);
+    // let fs = eximd::config::RealFileSystem::new(&eximd::config::RunType::Exec);
+    let fs = TempFileSystem::new();
     let items = payload.items;
     let groups = {
         let file_groups = state.file_group.lock().unwrap();
@@ -281,37 +304,47 @@ async fn commit_rename_groups_cmd(
     };
 
     thread::spawn(move || {
+        let mut rename_group_count = 0;
+        let mut rename_file_count = 0;
+        thread::sleep(std::time::Duration::from_secs(1));
+
         for group in groups {
             let nf = TauriCommitNotifier::new(&window, group.group_key());
             match group {
                 FileNameGroup::Image { ref image, .. } => {
                     if let Some(next_stem) = image.next_file_stem_from_exif() {
-                        eximd::exif::rename_with_rollback(
+                        let file_count = eximd::exif::rename_with_rollback(
                             &fs,
                             &nf,
                             group.merge_into_rename_refs(),
                             &next_stem,
                         );
+                        rename_group_count += 1;
+                        rename_file_count += file_count;
                     }
                 }
                 FileNameGroup::Video { ref video, .. } => {
                     if let Some(next_stem) = video.next_file_stem_from_exif() {
-                        eximd::exif::rename_with_rollback(
+                        let file_count = eximd::exif::rename_with_rollback(
                             &fs,
                             &nf,
                             group.merge_into_rename_refs(),
                             &next_stem,
                         );
+                        rename_group_count += 1;
+                        rename_file_count += file_count;
                     }
                 }
                 FileNameGroup::LiveImage { ref image, .. } => {
                     if let Some(next_stem) = image.next_file_stem_from_exif() {
-                        eximd::exif::rename_with_rollback(
+                        let file_count = eximd::exif::rename_with_rollback(
                             &fs,
                             &nf,
                             group.merge_into_rename_refs(),
                             &next_stem,
                         );
+                        rename_group_count += 1;
+                        rename_file_count += file_count;
                     }
                 }
                 _ => eprintln!("Error: we are trying to rename a file we are not supposed to."),
@@ -319,7 +352,13 @@ async fn commit_rename_groups_cmd(
         }
 
         window
-            .emit("RENAME_COMMIT_DONE_MSG", "")
+            .emit(
+                "RENAME_COMMIT_DONE_MSG",
+                RenameCounts {
+                    group_count: rename_group_count,
+                    file_count: rename_file_count,
+                },
+            )
             .expect("send message to FE");
     });
 

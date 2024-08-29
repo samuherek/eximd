@@ -192,6 +192,7 @@ const appMachine = setup({
         event: { type: "NAV_RENAME", paylaod: string }
         | { type: "NAV_DEDUPLICATE", payload: string }
         | { type: "NAV_INTRO" }
+        | { type: "NAV_TO_DROP" }
     },
     actions: {},
     actors: {
@@ -249,6 +250,16 @@ const appMachine = setup({
                             }
                         }
                     },
+                    on: {
+                        NAV_TO_DROP: {
+                            target: 'drop',
+                            actions: assign(() => ({
+                                srouce: null,
+                                fileGroups: [],
+                                filesCount: null
+                            }))
+                        }
+                    }
                 }
             },
             on: {

@@ -108,4 +108,24 @@ export function leaveToDown({
     }
 }
 
+export function leaveToOpacity({
+    delay,
+    duration,
+    timingFunction,
+    fillMode
+}: {
+    delay?: number,
+    duration?: number,
+    timingFunction?: string,
+    fillMode?: "backwards" | "forwards"
+} = {}) {
+    return {
+        animationName: "leave-opacity",
+        animationDuration: `${duration ?? 180}ms`,
+        animationDelay: `${delay ?? 0}ms`,
+        animationFillMode: fillMode ?? "forwards",
+        animationTimingFunction: timingFunction ?? "cubic-bezier(0.5, 0, 0.2, 1)",
+    }
+}
+
 export const LEAVE_TIME = 260;

@@ -481,7 +481,7 @@ pub fn rename_with_rollback<F: FileSystem, N: ExifNotifier>(
     nf: &N,
     items: Vec<&ExifFile>,
     next_stem: &str,
-) {
+) -> usize {
     let mut processed = vec![];
     let mut needs_rollback = false;
     for file in items {
@@ -501,7 +501,7 @@ pub fn rename_with_rollback<F: FileSystem, N: ExifNotifier>(
     }
 
     if needs_rollback {
-        for file in processed {
+        for file in processed.iter() {
             match fs.rename(&file.1, file.0.value()) {
                 Ok(_) => {
                     nf.rollback_success(&file.1, file.0);
@@ -512,6 +512,8 @@ pub fn rename_with_rollback<F: FileSystem, N: ExifNotifier>(
             }
         }
     }
+
+    processed.len()
 }
 
 #[cfg(test)]

@@ -1,9 +1,8 @@
-import { ActorRefFrom, assign, enqueueActions, fromCallback, fromPromise, not, or, sendParent, sendTo, setup, stateIn } from "xstate";
+import { ActorRefFrom, assign, enqueueActions, fromCallback, fromPromise, sendParent, sendTo, setup, stopChild } from "xstate";
 import { useSelector } from "@xstate/react";
-import { enterFromTop, LEAVE_TIME, leaveToTop, raiseErrorToUI, useNavDelay } from './utils';
+import { enterFromDown, enterFromTop, LEAVE_TIME, leaveToDown, leaveToOpacity, leaveToTop, raiseErrorToUI, useNavDelay } from './utils';
 import { invoke } from "@tauri-apps/api";
 import { listen } from "@tauri-apps/api/event";
-import { toast } from "react-toastify";
 import { FileGroupToDisplay, FileGroupType, FileGroupUncertain, FileGroupUnsupported, Path, SrcFile } from "./config";
 import clsx from 'clsx';
 
@@ -11,12 +10,12 @@ type Props = {
     actorRef: ActorRefFrom<typeof renameMachine>
 }
 
-const tauriExifCollectCommand = fromPromise(async () => {
+const tauriExifCollectCommand = fromPromise<null>(async () => {
     const res = await invoke<null>("start_exif_collection_cmd");
     return res;
 });
 
-const tauriCommitRenameGroupsCommand = fromPromise(async ({ input }) => {
+const tauriCommitRenameGroupsCommand = fromPromise<null, string[]>(async ({ input }) => {
     const res = await invoke<null>("commit_rename_groups_cmd", { payload: { items: input } });
     return res;
 });
@@ -44,8 +43,13 @@ const tauriExifDataListener = fromCallback(({ sendBack }) => {
             } as ExifFileDataEvent
         })
     })
-    const doneUnlisten = listen("EXIF_COLLECTION_DONE", () => {
-        sendBack({ type: "EXIF_COLLECTION_DONE" });
+    const doneUnlisten = listen<{ group_count: number, file_count: number }>("EXIF_COLLECTION_DONE", (data) => {
+        sendBack({
+            type: "EXIF_COLLECTION_DONE", payload: {
+                groupCount: data.payload.group_count,
+                fileCount: data.payload.file_count
+            }
+        });
     });
     return () => {
         unlisten.then(fn => fn())
@@ -100,7 +104,6 @@ const supportedItemMachine = setup({
             selected: boolean,
             src_next: string | null,
             file_name_next: string | null
-            isCommitted: boolean,
         },
         input: FileGroupToDisplay,
         events: { type: "DESELECT_ITEM" }
@@ -108,7 +111,8 @@ const supportedItemMachine = setup({
         | { type: "SELECT_ITEM_FROM_PARENT" }
         | { type: "DESELECT_ITEM_FROM_PARENT" }
         | { type: "SET_NEXT_STEM", payload: ExifFileDataEvent }
-        | { type: "RENAME_COMMIT_SUCCESS_FROM_PARENT" }
+        | { type: "RENAME_COMMIT_START" }
+        | { type: "RENAME_COMMIT_SUCCESS" }
     },
     guards: {
         isSelected: ({ context }) => context.selected === true,
@@ -121,7 +125,6 @@ const supportedItemMachine = setup({
         selected: true,
         src_next: null,
         file_name_next: null,
-        isCommitted: false
     }),
     on: {
         DESELECT_ITEM: {
@@ -150,6 +153,10 @@ const supportedItemMachine = setup({
                 assign({ selected: () => true }),
             ]
         },
+        RENAME_COMMIT_SUCCESS: {
+            target: ".end",
+            actions: () => console.log("rename commit success item to done")
+        }
     },
     states: {
         exifing: {
@@ -164,24 +171,26 @@ const supportedItemMachine = setup({
             }
         },
         ready: {
+            exit: () => console.log("exit item ready"),
             on: {
-                RENAME_COMMIT_SUCCESS_FROM_PARENT: {
-                    target: "done",
-                    actions: assign({
-                        isCommitted: () => true
-                    })
+                RENAME_COMMIT_START: 'comitting',
+            }
+        },
+        comitting: {
+            exit: () => console.log("exit item comitting"),
+        },
+        end: {
+            enter: () => console.log("in done"),
+            after: {
+                300: {
+                    actions: [() => console.log("in after 300 "), sendParent(({ context }) => ({
+                        type: "REMOVE_RENMAED_ITEM",
+                        payload: context.file.key
+                    }))]
                 }
             }
         },
-        done: {
-            on: {
-                DESELECT_ITEM: {},
-                SELECT_ITEM: {},
-                DESELECT_ITEM_FROM_PARENT: {},
-                SELECT_ITEM_FROM_PARENT: {},
-            }
-        }
-    }
+    },
 });
 
 const renameMachine = setup({
@@ -192,13 +201,15 @@ const renameMachine = setup({
             unsupported: ActorRefFrom<typeof unsupportedItemMachine>[],
             source: string,
             filesCount: number,
+            renameFileCount: number,
+            renameGroupCount: number,
             selected_all: boolean,
             selected_count: number,
         },
         events: { type: "TOGGLE_SELECTION_ALL" }
         | { type: "EXIF_FILE_DATA", payload: ExifFileDataEvent }
-        | { type: "RESET_TO_INTRO" }
-        | { type: "EXIF_COLLECTION_DONE" }
+        | { type: "NAV_DROP_INPUT" }
+        | { type: "EXIF_COLLECTION_DONE", payload: { fileCount: number, groupCount: number } }
         | { type: "SELECT_ITEM" }
         | { type: "DESELECT_ITEM" }
         | { type: "SELECT_ALL" }
@@ -206,6 +217,7 @@ const renameMachine = setup({
         | { type: "COMMIT_RENAME_GROUPS" }
         | { type: "RENAME_COMMIT_SUCCESS", payload: string }
         | { type: "RENAME_COMMIT_DONE" }
+        | { type: "REMOVE_RENMAED_ITEM", payload: string }
         | { type: "NAV_RENAME" }
         | { type: "NAV_UNCERTAIN" }
         | { type: "NAV_UNSUPPORTED" }
@@ -284,6 +296,8 @@ const renameMachine = setup({
                 unsupported: unsupported,
                 source: input.source,
                 filesCount: input.filesCount,
+                renameFileCount: 0,
+                renameGroupCount: 0,
                 selected_all: true,
                 selected_count: 0,
             }
@@ -320,7 +334,13 @@ const renameMachine = setup({
                                             ({ event }) => ({ type: "SET_NEXT_STEM", payload: event.payload })
                                         ),
                                     },
-                                    EXIF_COLLECTION_DONE: '#rename-machine.view.ready'
+                                    EXIF_COLLECTION_DONE: {
+                                        target: '#rename-machine.view.ready',
+                                        actions: assign({
+                                            renameFileCount: ({ event }) => event.payload.fileCount,
+                                            renameGroupCount: ({ event }) => event.payload.groupCount,
+                                        })
+                                    }
                                 }
                             },
                         },
@@ -345,34 +365,54 @@ const renameMachine = setup({
                                     },
                                     input: ({ context }) => {
                                         const toRename = context.items
-                                            .filter(x => x.getSnapshot().context.selected)
-                                            .map(x => x.getSnapshot().context.file.key)
+                                            .map(x => x.getSnapshot().context)
+                                            .filter(x => x.selected)
+                                            .map(x => x.file.key);
                                         return toRename
                                     }
                                 },
                             },
                             loading: {
+                                entry: ({ context }) => {
+                                    context.items.forEach(x => {
+                                        x.send({ type: "RENAME_COMMIT_START" });
+                                    });
+                                },
                                 on: {
-                                    RENAME_COMMIT_SUCCESS: {
-                                        actions: [(data) => console.log("TODO: we are here", data),
-                                        sendTo(({ event }) => event.payload, { type: "RENAME_COMMIT_SUCCESS_FROM_PARENT" })
-                                        ]
-                                    },
                                     RENAME_COMMIT_DONE: {
-                                        target: "#rename-machine.view.done"
+                                        target: "#rename-machine.view.done",
+                                        actions: [
+                                            () => console.log("TODO: set how many have been removed"),
+                                            assign({
+                                                items: [],
+                                            })
+                                        ]
                                     }
                                 }
                             },
+                            done: {}
                         },
                         on: {
+                            RENAME_COMMIT_SUCCESS: {
+                                actions: [
+                                    sendTo(({ event }) => event.payload, { type: "RENAME_COMMIT_SUCCESS" }),
+                                ]
+                            },
+                            REMOVE_RENMAED_ITEM: {
+                                actions: [() => console.log("TODO: we are still removing"),
+                                stopChild(({ event }) => event.payload),
+                                assign({
+                                    items: ({ context, event }) => context.items
+                                        .filter(x => x.getSnapshot().context.file.key !== event.payload)
+                                })
+                                ]
+                            },
                             TOGGLE_SELECTION_ALL: {},
                             RESET_TO_INTRO: {}
                         }
                     },
-                    done: {
-                        entry: () => toast("Done renaming", { type: "success" })
-                    }
-                }
+                    done: {}
+                },
             },
             nav: {
                 initial: 'toRename',
@@ -446,8 +486,11 @@ const renameMachine = setup({
                     selected_count: () => 0
                 })]
             },
-            RESET_TO_INTRO: {
-                actions: sendParent({ type: "RESET_TO_INTRO" })
+            NAV_DROP_INPUT: {
+                actions: [
+                    () => console.log("TODO: cleanup all threads in rust"),
+                    sendParent({ type: "NAV_TO_DROP" })
+                ]
             }
         }
     }
@@ -490,27 +533,26 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
     });
     const isSelected = item.selected;
     const isExifing = useSelector(actorRef, state => state.matches("exifing"));
-    // const isReady = useSelector(actorRef, state => state.matches("ready"));
-    const isCommitted = useSelector(actorRef, state => state.context.isCommitted);
+    const isComitting = useSelector(actorRef, state => state.matches("comitting"));
+    const isDone = useSelector(actorRef, state => state.matches("end"));
 
     return (
-        <div className="grid grid-cols-[minmax(50px,1fr)_300px] items-center py-2 pl-1.5 border-b border-neutral-800">
+        <div
+            className="grid grid-cols-[minmax(50px,1fr)_300px] items-center py-2 pl-1.5 border-b border-neutral-800"
+            style={isDone ? leaveToOpacity() : undefined}
+        >
             <div className="flex items-center whitespace-nowrap">
-                {!isCommitted ? (
-                    <button
-                        className="group w-[34px] h-[34px] ml-2 mr-2"
-                        onClick={() => { actorRef.send({ type: item.selected ? "DESELECT_ITEM" : "SELECT_ITEM" }) }}>
-                        <span
-                            className={clsx("group-hover:scale-110 scale-100 block relative border-2 border-green-500 bg-transparent rounded-md w-[18px] h-[18px] shadow", {
-                                "before:aboslute before:w-2 before:h-2 before:block before:bg-green-500 before:ml-[3px] before:mt-[3px] before:rounded-sm before:shadow": isSelected
-                            })}
-                        ></span>
-                    </button>
-                ) : (
-                    <span className="py-1 px-2 mr-2 flex justify-center">
-                        <svg className="w-4 h-4 text-neutral-500" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path className="fa-secondary" opacity=".4" d="M0 96C0 60.7 28.7 32 64 32H384c35.3 0 64 28.7 64 64V416c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64V96z" /><path className="fa-primary" d="" /></svg>
-                    </span>
-                )}
+                <button
+                    disabled={isComitting}
+                    className="group w-[34px] h-[34px] ml-2 mr-2"
+                    onClick={() => { actorRef.send({ type: item.selected ? "DESELECT_ITEM" : "SELECT_ITEM" }) }}>
+                    <span
+                        className={clsx("group-hover:scale-110 scale-100 block relative border-2 border-green-500 bg-transparent rounded-md w-[18px] h-[18px] shadow", {
+                            "before:aboslute before:w-2 before:h-2 before:block before:bg-green-500 before:ml-[3px] before:mt-[3px] before:rounded-sm before:shadow": isSelected,
+                            "group-hover:scale-100": isComitting,
+                        })}
+                    ></span>
+                </button>
                 {item.file.type === "Image" ? (
                     <FileGroupImage item={item.file.image} />
                 ) : item.file.type === "Video" ? (
@@ -536,14 +578,6 @@ function Item({ actorRef }: { actorRef: ActorRefFrom<typeof supportedItemMachine
                         <span className="ml-8">{item.file_name_next}</span>
                     </div>
                 ) : null}
-                <div className="w-12 flex items-center justify-center">
-                    {isCommitted ? (
-                        <svg className="w-5 h-5 text-green-300" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-                            <path className="fa-secondary" opacity=".4" d="M0 256a256 256 0 1 0 512 0A256 256 0 1 0 0 256zm136 0c0-6.1 2.3-12.3 7-17c9.4-9.4 24.6-9.4 33.9 0l47 47c37-37 74-74 111-111c4.7-4.7 10.8-7 17-7s12.3 2.3 17 7c2.3 2.3 4.1 5 5.3 7.9c.6 1.5 1 2.9 1.3 4.4c.2 1.1 .3 2.2 .3 2.2c.1 1.2 .1 1.2 .1 2.5c-.1 1.5-.1 1.9-.1 2.3c-.1 .7-.2 1.5-.3 2.2c-.3 1.5-.7 3-1.3 4.4c-1.2 2.9-2.9 5.6-5.3 7.9c-42.7 42.7-85.3 85.3-128 128c-4.7 4.7-10.8 7-17 7s-12.3-2.3-17-7c-21.3-21.3-42.7-42.7-64-64c-4.7-4.7-7-10.8-7-17z" />
-                            <path className="fa-primary" d="M369 175c9.4 9.4 9.4 24.6 0 33.9L241 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L335 175c9.4-9.4 24.6-9.4 33.9 0z" />
-                        </svg>
-                    ) : null}
-                </div>
             </div>
         </div>
     )
@@ -621,10 +655,15 @@ function Rename({ actorRef }: Props) {
     const unsupported = useSelector(actorRef, state => state.context.unsupported);
     const uncertain = useSelector(actorRef, state => state.context.uncertain);
     const isExifing = useSelector(actorRef, state => state.matches({ view: "exifing" }));
+    const isCommitting = useSelector(actorRef, state => state.matches({ view: "committing" }));
     const isReady = useSelector(actorRef, state => state.matches({ view: "ready" }));
-    // const isSelectedAll = useSelector(actorRef, state => state.context.selected_all);
-    const numbOfItemsToRename = useSelector(actorRef, state => state.context.selected_count);
-    const [isLeaving, navDelay] = useNavDelay(LEAVE_TIME - 100);
+    const isDone = useSelector(actorRef, state => state.matches({ view: "done" }));
+    const doneCount = useSelector(actorRef, state => ({
+        fileCount: state.context.renameFileCount,
+        groupCount: state.context.renameGroupCount
+    }));
+
+    const [isLeaving, navDelay] = useNavDelay(LEAVE_TIME - 200);
     const nav = useSelector(actorRef, state => ({
         toRename: state.matches({ nav: "toRename" }),
         uncertain: state.matches({ nav: "uncertain" }),
@@ -632,12 +671,14 @@ function Rename({ actorRef }: Props) {
         all: state.matches({ nav: "all" }),
     }))
 
-
     return (
         <>
             <div className="relative h-full">
                 <div className="max-w-[1200px] mx-auto p-8">
-                    <div className="flex items-center justify-center pt-6 pb-8" style={isLeaving ? leaveToTop({ duration: 140 }) : enterFromTop()}>
+                    <div
+                        className="flex items-center justify-center pt-6 pb-8"
+                        style={isLeaving ? leaveToTop({ duration: 140 }) : enterFromTop()}
+                    >
                         <h2 className="relative text-2xl font-medium">
                             Rename Media Files
                             <button className="absolute ml-4 mt-1.5 text-sm text-neutral-500">
@@ -646,7 +687,10 @@ function Rename({ actorRef }: Props) {
                         </h2>
                     </div>
                     <div
-                        className="flex p-2.5 mb-8 rounded-lg items-center shadow-lg bg-neutral-200 dark:bg-neutral-800"
+                        className={clsx("flex p-2.5 h-[56px] mb-8 rounded-lg items-center shadow-lg bg-neutral-200 dark:bg-neutral-800", {
+                            "pointer-events-none": isCommitting || isDone,
+                            "opacity-50": isDone
+                        })}
                         style={isLeaving ? leaveToTop({ duration: 140 }) : enterFromTop()}
                     >
                         <nav>
@@ -687,60 +731,113 @@ function Rename({ actorRef }: Props) {
                                 All files <span className="ml-1 text-neutral-500 text-xs">{items.length + uncertain.length + unsupported.length}</span>
                             </button>
                         </nav>
-                        <button disabled={isExifing} className="ml-auto font-medium rounded-md px-6 py-1.5 text-black shadow-md bg-green-500 hover:bg-green-400 disabled:bg-green-300">
-                            Rename
-                        </button>
+                        {isExifing || isCommitting ? (
+                            <div className="ml-auto flex items-center pr-4">
+                                <span className="mr-4 font-medium text-sm">{isExifing ? "Getting dates" : isCommitting ? "Renaming" : "asdsd"}</span>
+                                <svg className="animate-spin text-green-500 w-5 h-5" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+                                    <path opacity=".4" d="M0 256C0 114.9 114.1 .5 255.1 0C237.9 .5 224 14.6 224 32c0 17.7 14.3 32 32 32C150 64 64 150 64 256s86 192 192 192c69.7 0 130.7-37.1 164.5-92.6c-3 6.6-3.3 14.8-1 22.2c1.2 3.7 3 7.2 5.4 10.3c1.2 1.5 2.6 3 4.1 4.3c.8 .7 1.6 1.3 2.4 1.9c.4 .3 .8 .6 1.3 .9s.9 .6 1.3 .8c5 2.9 10.6 4.3 16 4.3c11 0 21.8-5.7 27.7-16c-44.3 76.5-127 128-221.7 128C114.6 512 0 397.4 0 256z" />
+                                    <path d="M224 32c0-17.7 14.3-32 32-32C397.4 0 512 114.6 512 256c0 46.6-12.5 90.4-34.3 128c-8.8 15.3-28.4 20.5-43.7 11.7s-20.5-28.4-11.7-43.7c16.3-28.2 25.7-61 25.7-96c0-106-86-192-192-192c-17.7 0-32-14.3-32-32z" />
+                                </svg>
+                            </div>
+                        ) : isReady ? (
+                            <button
+                                onClick={() => actorRef.send({ type: "COMMIT_RENAME_GROUPS" })}
+                                disabled={isExifing}
+                                className="ml-auto font-medium rounded-md px-6 py-1.5 text-black shadow-md bg-green-500 hover:bg-green-400 disabled:bg-green-300"
+                            >
+                                Rename
+                            </button>
+                        ) : null}
                     </div>
 
                     <div
                         className="overflow-y-auto pb-32"
-                        style={{ maxHeight: "calc(100vh - 13rem)" }}
+                        style={{
+                            maxHeight: "calc(100vh - 13rem)",
+                            height: "calc(100vh - 13rem)",
+                            ...(isLeaving ? leaveToDown({ duration: 140 }) : enterFromDown()),
+                        }}
                     >
-                    {nav.toRename ? (
-                        <>
-                        {items.map((item, index) => (
-                            <Item actorRef={item} key={index} />
-                        ))}
-                        </>
-                    ) : nav.uncertain ? (
-                        <>
-                        {uncertain.map((item, index) => (
-                            <UncertainItem actorRef={item} key={`un-${index}`} />
-                        ))}
-                        </>
-                    ) : nav.unsupported ? (
-                        <>
-                        {unsupported.map((item, index) => (
-                            <UnsupportedItem actorRef={item} key={`u-${index}`} />
-                        ))}
-                        </>
-                    ) : nav.all ? (
-                        <>
-                        {items.map((item, index) => (
-                            <Item actorRef={item} key={index} />
-                        ))}
-                        {uncertain.map((item, index) => (
-                            <UncertainItem actorRef={item} key={`un-${index}`} />
-                        ))}
-                        {unsupported.map((item, index) => (
-                            <UnsupportedItem actorRef={item} key={`u-${index}`} />
-                        ))}
-                        </>
-                    ) : null}
+                        {isDone ? (
+                            <div className="flex flex-col text-center pt-[10vh]"
+                                style={enterFromDown()}
+                            >
+                                <div className="mx-auto mb-8 text-neutral-500">
+                                    <svg className="w-12 h-12" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+                                        <path d="M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512zM129.7 327.2l28.6-14.3c8.7 17.5 41.3 55.2 97.7 55.2s88.9-37.7 97.7-55.2l28.6 14.3C369.7 352.3 327.6 400 256 400s-113.7-47.7-126.3-72.8zm89.5-89.6c-21.6-28.8-64.8-28.8-86.4 0l-25.6-19.2c34.4-45.9 103.2-45.9 137.6 0l-25.6 19.2zm73.6 0l-25.6-19.2c34.4-45.9 103.2-45.9 137.6 0l-25.6 19.2c-21.6-28.8-64.8-28.8-86.4 0z" />
+                                    </svg>
+                                </div>
+                                <div className="mb-16">
+                                    <p className="mb-6 text-lg">Succesfully renamed <span className="font-bold">{doneCount.fileCount}</span> file in <span className="font-bold">{doneCount.groupCount}</span> groups</p>
+                                </div>
+                                <div>
+                                    <button
+                                        className="rounded-md bg-green-500 px-6 py-1 font-medium text-black shadow-lg"
+                                        onClick={() => navDelay(() => actorRef.send({ type: "NAV_DROP_INPUT" }))}
+                                    >
+                                        Start again
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                {nav.toRename ? (
+                                    <>
+                                        {items.filter(x => x.getSnapshot().context.selected).map((item, index) => (
+                                            <Item actorRef={item} key={index} />
+                                        ))}
+                                    </>
+                                ) : nav.uncertain ? (
+                                    <>
+                                        {uncertain.map((item, index) => (
+                                            <UncertainItem actorRef={item} key={`un-${index}`} />
+                                        ))}
+                                    </>
+                                ) : nav.unsupported ? (
+                                    <>
+                                        {unsupported.map((item, index) => (
+                                            <UnsupportedItem actorRef={item} key={`u-${index}`} />
+                                        ))}
+                                    </>
+                                ) : nav.all ? (
+                                    <>
+                                        {items.map((item, index) => (
+                                            <Item actorRef={item} key={index} />
+                                        ))}
+                                        {uncertain.map((item, index) => (
+                                            <UncertainItem actorRef={item} key={`un-${index}`} />
+                                        ))}
+                                        {unsupported.map((item, index) => (
+                                            <UnsupportedItem actorRef={item} key={`u-${index}`} />
+                                        ))}
+                                    </>
+                                ) : null}
+                            </>
+                        )}
                     </div>
                     <div
-                        className="absolute z-10 bottom-8 flex items-center p-3 px-4 rounded-lg shadow-lg bg-neutral-200 dark:bg-neutral-800"
-                        style={{ width: "calc(100vw - 4rem)", maxWidth: "calc(1200px - 4rem)" }}
+                        className={clsx("absolute z-10 bottom-8 flex items-center p-3 px-4 rounded-lg shadow-lg bg-neutral-200 dark:bg-neutral-800", {
+                            "pointer-events-none opacity-50": isCommitting || isDone
+                        })}
+                        style={{
+                            maxHeight: "calc(100vh - 13rem)",
+                            width: "calc(100vw - 4rem)",
+                            maxWidth: "calc(1200px - 4rem)",
+                            ...(isLeaving ? leaveToDown({ duration: 140 }) : enterFromDown())
+                        }}
                     >
                         <svg className="w-4 h-4 mr-4" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path className="fa-secondary" opacity=".4" d="M64 480H448c35.3 0 64-28.7 64-64V160c0-35.3-28.7-64-64-64H288c-10.1 0-19.6-4.7-25.6-12.8L243.2 57.6C231.1 41.5 212.1 32 192 32H64C28.7 32 0 60.7 0 96V416c0 35.3 28.7 64 64 64z" /><path d="" /></svg>
                         <span className="">{source}</span>
-                        <button className="ml-auto text-sm hover:text-black hover:border-black hover:dark:text-white hover:dark:border-white dark:text-neutral-300 border px-3 py-0.5 rounded-md dark:border-neutral-400 text-neutral-700 border-neutral-600">
+                        <button
+                            className="ml-auto text-sm hover:text-black hover:border-black hover:dark:text-white hover:dark:border-white dark:text-neutral-300 border px-3 py-0.5 rounded-md dark:border-neutral-400 text-neutral-700 border-neutral-600"
+                            onClick={() => navDelay(() => actorRef.send({ type: "NAV_DROP_INPUT" }))}
+                        >
                             Change
                         </button>
                     </div>
                 </div>
             </div>
-            <div className="absolute bottom-0 h-36 w-full bg-gradient-to-t from-neutral-950 to-transparent"></div>
+            <div className="absolute pointer-events-none bottom-0 h-36 w-full bg-gradient-to-t from-neutral-950 to-transparent"></div>
         </>
     )
 }
