@@ -6,8 +6,9 @@ use eximd::file::FilePath;
 use serde::ser::SerializeStruct;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use tauri::{AppHandle, Manager, Window};
 
 // 1. load the source -> stick the dir in the state
@@ -17,6 +18,7 @@ use tauri::{AppHandle, Manager, Window};
 struct AppState {
     source: Mutex<PathBuf>,
     file_group: Arc<Mutex<Vec<FileNameGroup>>>,
+    exiffing_handles: Arc<Mutex<Vec<(JoinHandle<()>, Arc<AtomicBool>)>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -129,11 +131,27 @@ impl ExifFileData {
             src: item.src.value().to_owned(),
             src_next: next_src.clone(),
             file_name_next: item
-            .next_file_stem_from_exif()
-            .unwrap_or("ERROR".to_string()),
-            ext: item.ext.value().into()
+                .next_file_stem_from_exif()
+                .unwrap_or("ERROR".to_string()),
+            ext: item.ext.value().into(),
         }
     }
+}
+
+#[tauri::command]
+fn cancel_exif_collection_cmd(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    let mut handles = state.exiffing_handles.lock().unwrap();
+
+    for (_, flag) in handles.iter() {
+        flag.store(true, Ordering::Relaxed);
+    }
+
+    while let Some((handle, _)) = handles.pop() {
+        handle.join().expect("Could not join one of exif threads");
+    }
+    println!("All threads have been canceled and joined.");
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -147,21 +165,28 @@ fn start_exif_collection_cmd(
         .path_resolver()
         .resolve_resource("../binaries")
         .ok_or_else(|| "Failed to resolve resource dir for exiftool")?;
-    let state = std::sync::Arc::clone(&state);
+    let state_clone = std::sync::Arc::clone(&state);
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let cancle_flag_clone = Arc::clone(&cancel_flag);
 
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         let cmd_path = resource_path
             .join("exiftool/exiftool")
             .to_string_lossy()
             .to_string();
 
         for (i, mut group) in file_group.iter_mut().enumerate() {
+            if cancle_flag_clone.load(Ordering::Relaxed) {
+                println!("Exif collection thread cancelling");
+                break;
+            }
+
             match &mut group {
                 FileNameGroup::Image { image, .. } => {
                     image.fetch_and_set_metadata(&cmd_path); // this is blocking.....
                     if let Some(next_src) = image.next_file_src_from_exif() {
                         let next_metadata = &image.metadata;
-                        let mut file_group = state.file_group.lock().unwrap();
+                        let mut file_group = state_clone.file_group.lock().unwrap();
                         if let FileNameGroup::Image { ref mut image, .. } = file_group[i] {
                             image.metadata = next_metadata.clone();
                         }
@@ -175,7 +200,7 @@ fn start_exif_collection_cmd(
                     video.fetch_and_set_metadata(&cmd_path);
                     if let Some(next_src) = video.next_file_src_from_exif() {
                         let next_metadata = &video.metadata;
-                        let mut file_group = state.file_group.lock().unwrap();
+                        let mut file_group = state_clone.file_group.lock().unwrap();
                         if let FileNameGroup::Video { ref mut video, .. } = file_group[i] {
                             video.metadata = next_metadata.clone();
                         }
@@ -188,7 +213,7 @@ fn start_exif_collection_cmd(
                     image.fetch_and_set_metadata(&cmd_path);
                     if let Some(next_src) = image.next_file_src_from_exif() {
                         let next_metadata = &image.metadata;
-                        let mut file_group = state.file_group.lock().unwrap();
+                        let mut file_group = state_clone.file_group.lock().unwrap();
                         if let FileNameGroup::LiveImage { ref mut image, .. } = file_group[i] {
                             image.metadata = next_metadata.clone();
                         }
@@ -208,6 +233,12 @@ fn start_exif_collection_cmd(
             .emit("EXIF_COLLECTION_DONE", "")
             .expect("send message to FE");
     });
+
+    state
+        .exiffing_handles
+        .lock()
+        .unwrap()
+        .push((handle, cancel_flag));
 
     Ok(())
 }
@@ -433,6 +464,7 @@ fn main() {
             drop_input_cmd,
             collect_rename_files_cmd,
             start_exif_collection_cmd,
+            cancel_exif_collection_cmd,
             commit_rename_groups_cmd,
         ])
         .run(tauri::generate_context!())

@@ -488,7 +488,10 @@ const renameMachine = setup({
             },
             NAV_DROP_INPUT: {
                 actions: [
-                    () => console.log("TODO: cleanup all threads in rust"),
+                    () => {
+                        invoke("cancel_exif_collection_cmd")
+                            .catch((err) => console.error("ERROR: while cancelling exif threads", err))
+                    },
                     sendParent({ type: "NAV_TO_DROP" })
                 ]
             }

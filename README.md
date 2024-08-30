@@ -57,13 +57,12 @@ If you fency a cli app instead. You can download it with **Homebrew**
 
 [ ] Incorporate the "duplicate files" view
 [ ] Implement multithreading for renaming and exif date collection 
-[ ] Navigating from the rename back when exif collecting needs to cancel the collecting thread
+[ ] Cancel renaming ? 
 [ ] Ability to customize the date format
 [ ] Provide help information and lines
 [ ] Write wikis on how it works and help infomration
 [ ] Extensive testing 
 [ ] Lock the file before renaming so that it can't be used by other apps + check if not used (just in case)
-[ ] Fix the extension for the rename exmaple
 [ ] Fix the GA to bundel and sign the app for macos
 [ ] Make available for other platforms if asked for. 
 [ ] autoupdate 
