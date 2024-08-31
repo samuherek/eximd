@@ -26,6 +26,8 @@ https://github.com/user-attachments/assets/1ffccf46-0295-4959-bef9-ddf28c93b62c
     - Adobe lightroom metadata file for raw images
     - Apple's non-destructive iphone edit files in "aae"
     - ....
+
+
   
 ### What this tool does
 
