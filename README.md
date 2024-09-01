@@ -52,7 +52,6 @@ Then it shows you the groupings and won't do the renaming. This is based on the 
 If you fency a cli app instead. You can download it with **Homebrew**
 
 - tap
-- 
 
 
 ## TODO: 
