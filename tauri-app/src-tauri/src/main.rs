@@ -323,8 +323,8 @@ async fn commit_rename_groups_cmd(
     window: Window,
     payload: CommitRenamePayload,
 ) -> Result<(), String> {
-    // let fs = eximd::config::RealFileSystem::new(&eximd::config::RunType::Exec);
-    let fs = TempFileSystem::new();
+    let fs = eximd::config::RealFileSystem::new(&eximd::config::RunType::Exec);
+    // let fs = TempFileSystem::new();
     let items = payload.items;
     let groups = {
         let file_groups = state.file_group.lock().unwrap();
