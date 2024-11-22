@@ -28,16 +28,16 @@ use std::process::Command;
 #[serde(rename_all = "PascalCase")]
 pub struct ExifMetadata {
     pub source_file: String,
-    file_name: String,
-    file_size: String,
-    file_type: Option<String>,
-    file_type_extension: Option<String>,
-    image_width: Option<usize>,
-    _image_height: Option<usize>,
+    pub file_name: String,
+    pub file_size: String,
+    pub file_type: Option<String>,
+    pub file_type_extension: Option<String>,
+    pub image_width: Option<usize>,
+    pub _image_height: Option<usize>,
     #[serde(default, deserialize_with = "parse_date")]
-    _date_created: Option<NaiveDateTime>,
+    pub _date_created: Option<NaiveDateTime>,
     #[serde(default, deserialize_with = "parse_date")]
-    _create_date: Option<NaiveDateTime>,
+    pub _create_date: Option<NaiveDateTime>,
     #[serde(default, deserialize_with = "parse_date")]
     pub date_time_original: Option<NaiveDateTime>,
     #[serde(default, deserialize_with = "parse_date")]

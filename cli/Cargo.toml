@@ -8,3 +8,6 @@ core = { path = "../core" }
 chrono = { version = "0.4.38", features = ["serde"] }
 clap = { version = "4.5.15", features = ["derive"] }
 indicatif = "0.17.8"
+sqlx = { version = "0.8.2", features = ["sqlite", "migrate", "runtime-tokio-rustls", "macros"] }
+tokio = { version = "1.41.1", features = ["full"] }
+eyre = "0.6.12"

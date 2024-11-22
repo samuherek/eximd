@@ -16,8 +16,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Test,
-    Dups {
+    Collect {
         path: Option<PathBuf>,
+        #[arg(short, long)]
+        db: PathBuf,
+        #[arg(short, long)]
+        force: bool,
+    },
+    Analyze {
+        db: PathBuf,
     },
     Rename {
         path: Option<PathBuf>,
@@ -34,12 +41,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("Test success.");
             // exif::read_with_rs()?;
         }
-        Some(Commands::Dups { path }) => {
+        Some(Commands::Collect { path, db, force }) => {
             let path_buf = path.unwrap_or_else(|| {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
             });
-            commands::dups::exec(&path_buf)?;
+            commands::collect::exec(&path_buf, &db, force)?;
+        }
+        Some(Commands::Analyze { db }) => {
+            commands::analyze::exec(&db)?;
         }
         Some(Commands::Rename { exec, path }) => {
             let mode = if exec {
