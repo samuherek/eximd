@@ -20,8 +20,16 @@ enum Commands {
         path: Option<PathBuf>,
         #[arg(short, long)]
         db: PathBuf,
-        #[arg(short, long)]
+        #[arg(long)]
         force: bool,
+        #[arg(long)]
+        file_cache: bool,
+        #[arg(long)]
+        skip: Option<usize>,
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long)]
+        exec: bool,
     },
     Analyze {
         db: PathBuf,
@@ -41,12 +49,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("Test success.");
             // exif::read_with_rs()?;
         }
-        Some(Commands::Collect { path, db, force }) => {
+        Some(Commands::Collect {
+            path,
+            db,
+            force,
+            file_cache,
+            skip,
+            limit,
+            exec
+        }) => {
             let path_buf = path.unwrap_or_else(|| {
                 std::env::current_dir()
                     .expect("Did not provide path and couldn't read current dir.")
             });
-            commands::collect::exec(&path_buf, &db, force)?;
+            commands::collect::exec(&path_buf, &db, force, file_cache, skip, limit, exec)?;
         }
         Some(Commands::Analyze { db }) => {
             commands::analyze::exec(&db)?;

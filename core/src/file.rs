@@ -2,7 +2,7 @@ use super::utils;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FilePath(PathBuf);
 
 impl FilePath {
@@ -29,7 +29,7 @@ impl ToString for FilePath {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FileStem(String);
 
 impl FileStem {
@@ -55,7 +55,7 @@ impl ToString for FileStem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FileExt(String);
 
 impl FileExt {
@@ -80,7 +80,7 @@ impl ToString for FileExt {
     }
 }
 
-#[derive(Debug, serde::Serialize, Clone, PartialEq)]
+#[derive(Debug, serde::Serialize, Clone, PartialEq, serde::Deserialize)]
 pub enum FileType {
     IMG,
     VIDEO,
@@ -99,7 +99,7 @@ impl From<&FileExt> for FileType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InputFile {
     pub src: FilePath,
     pub src_relative: FilePath,

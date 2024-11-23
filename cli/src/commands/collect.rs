@@ -1,5 +1,6 @@
 use core::dir::collect_files;
 use core::exif::{self, ExifMetadata};
+use core::file::{FilePath, InputFile};
 use core::utils;
 use eyre::{eyre, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -72,41 +73,90 @@ async fn save_to_database(exif_files: &Vec<ExifMetadata>, pool: &SqlitePool) -> 
     Ok(())
 }
 
-fn collect_metadata(path: &Path) -> Result<Vec<ExifMetadata>> {
-    let path_string = utils::path_to_string(path);
-    println!("Collecting file paths in '{}'", path_string);
-    let files = collect_files(path).map_err(|x| eyre!("{x}"))?;
+fn get_files(path: &Path) -> Result<Vec<InputFile>> {
+    collect_files(path).map_err(|x| eyre!("{x}"))
+}
 
-    println!("Collecting file metadata in '{}'", path_string);
+async fn collect_metadata(files: Vec<InputFile>, pool: &SqlitePool) -> Result<()> {
     let progress = ProgressBar::new(files.len().try_into()?).with_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} items")?,
     );
-    let mut exif_files = vec![];
-    for (i, file) in files.iter().enumerate() {
-        if let Some(exif_file) = exif::get_exif_file_from_input(&"exiftool", file).metadata {
-            exif_files.push(exif_file);
+
+    let mut cursor = 0;
+    let mut exif_buff = vec![];
+    let step = 10;
+
+    while cursor < files.len() {
+        for (i, file) in files.iter().skip(cursor).take(step).enumerate() {
+            if let Some(exif_file) = exif::get_exif_file_from_input(&"exiftool", file).metadata {
+                exif_buff.push(exif_file);
+            }
+            progress.set_message(format!("Processing item {}", cursor + i));
+            progress.set_position((cursor + i).try_into()?);
         }
-        progress.set_message(format!("Processing item {}", i));
-        progress.set_position(i.try_into()?);
+
+        save_to_database(&exif_buff, &pool).await?;
+        exif_buff.clear();
+        cursor += step;
     }
+
     progress.finish_and_clear();
 
-    Ok(exif_files)
+    Ok(())
 }
 
 // The full function to collect and print all the possible
 // duplicates that were found.
 #[tokio::main]
-pub async fn exec(path: &PathBuf, db: &PathBuf, force: bool) -> Result<(), Box<dyn Error>> {
+pub async fn exec(
+    path: &PathBuf,
+    db: &PathBuf,
+    force: bool,
+    file_cache: bool,
+    skip: Option<usize>,
+    limit: Option<usize>,
+    exec: bool,
+) -> Result<(), Box<dyn Error>> {
     let time = std::time::Instant::now();
-    let exif_files = collect_metadata(path)?;
+    let path_string = utils::path_to_string(path);
+
+    println!("Collecting file paths in '{}'", path_string);
+    let mut files: Vec<InputFile> = if file_cache {
+        println!("Reading file cache.");
+        let buff = fs::read_to_string("file_list.txt")?;
+        let data: Vec<InputFile> = serde_json::from_str(&buff)?;
+        if let Some(skip) = skip {
+            data.into_iter().skip(skip).collect()
+        } else {
+            data
+        }
+    } else {
+        let files = get_files(path)?;
+        let data = serde_json::to_string(&files)?;
+        fs::write("file_list.txt", data.as_bytes())?;
+        files
+    };
+
+    if let Some(limit) = limit {
+        files = files.into_iter().take(limit).collect();
+    }
+
+    println!("File list data saved to file_list.txt");
+
+    if !exec {
+        println!("{:?}", files.first().unwrap());
+        println!("next file: {:?}", files);
+        std::process::exit(0);
+    }
+
+    println!("Collecting file metadata in '{}'", path_string);
     let pool = connect_database(db, force).await?;
 
-    save_to_database(&exif_files, &pool).await?;
+    collect_metadata(files, &pool).await?;
 
     let duration = indicatif::HumanDuration(time.elapsed());
-    println!("Saved in the {db:?}. Took in {}", duration);
+    println!("Saved in the {db:?}. Took {}", duration);
 
     Ok(())
 }
