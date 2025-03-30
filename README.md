@@ -56,6 +56,7 @@ If you fency a cli app instead. You can download it with **Homebrew**
 
 
 
+
 ## TODO: 
 
 [ ] Incorporate the "duplicate files" view
